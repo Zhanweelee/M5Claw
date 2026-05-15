@@ -205,13 +205,15 @@ bool fillBuildTimeDefaults() {
 static bool isSensitiveNvsKey(const char* key) {
     return strcmp(key, "pass") == 0
         || strcmp(key, "llm_key") == 0
+        || strcmp(key, "tts_key") == 0
         || strcmp(key, "wc_token") == 0;
 }
 
 // ── M5Burner NVS Configure protocol ──────────────────────────
 static const char* const NVS_KEYS[] = {
     "ssid", "pass", "llm_provider", "llm_key", "llm_model",
-    "city", "wc_token", "wc_host"
+    "city", "tts_provider", "tts_key", "tts_voice",
+    "wc_token", "wc_host"
 };
 
 static String nvsGet(const char* key) {
