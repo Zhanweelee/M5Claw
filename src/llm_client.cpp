@@ -946,12 +946,25 @@ static bool process_openai_stream(ChunkedReader& reader, LlmResponse* resp,
 static bool read_json_body(WiFiClientSecure& client, bool chunked, int contentLength, char** outBuf, size_t* outLen, size_t maxLen) {
     *outBuf = nullptr;
     *outLen = 0;
-    char* buf = (char*)alloc_prefer_psram(maxLen + 1);
-    if (!buf) return false;
+
+    // Use Content-Length when available to avoid overallocation
+    size_t allocSize;
+    if (contentLength > 0) {
+        allocSize = (size_t)contentLength + 1;
+        if (allocSize > maxLen) allocSize = maxLen;
+    } else {
+        allocSize = maxLen;
+    }
+
+    char* buf = (char*)alloc_prefer_psram(allocSize);
+    if (!buf) {
+        Serial.printf("[HTTP] Body alloc failed (want %u bytes)\n", (unsigned)allocSize);
+        return false;
+    }
 
     size_t len = 0;
     ChunkedReader reader(client, chunked, contentLength);
-    while (len < maxLen) {
+    while (len < allocSize - 1) {
         int c = reader.readByte();
         if (c < 0) break;
         buf[len++] = (char)c;
@@ -1158,9 +1171,10 @@ static bool tts_post_json(const char* path, const String& bodyStr,
     if (!ok || !respBody) return false;
 
     if (localMeta.status_code < 200 || localMeta.status_code >= 300) {
-        Serial.printf("[TTS] HTTP %d path=%s type=%s\n",
+        Serial.printf("[TTS] HTTP %d path=%s type=%s cl=%d\n",
                       localMeta.status_code, path,
-                      localMeta.content_type[0] ? localMeta.content_type : "(unknown)");
+                      localMeta.content_type[0] ? localMeta.content_type : "(unknown)",
+                      localMeta.content_length);
         Serial.printf("[TTS] Error body: %.200s\n", respBody);
         heap_caps_free(respBody);
         return false;
@@ -1611,8 +1625,10 @@ bool stt_transcribe_file(const char* file_path, char** out_text, size_t* out_len
         client.stop();
         return false;
     }
-    Serial.printf("[STT] Response status=%d type=%s\n",
-                  meta.status_code, meta.content_type[0] ? meta.content_type : "(unknown)");
+    Serial.printf("[STT] Response status=%d type=%s cl=%d\n",
+                  meta.status_code,
+                  meta.content_type[0] ? meta.content_type : "(unknown)",
+                  meta.content_length);
 
     if (meta.status_code < 200 || meta.status_code >= 300) {
         char* errBody = nullptr;
