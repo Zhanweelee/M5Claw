@@ -1304,11 +1304,18 @@ bool llm_speak_text(const char* text) {
 
     auto tryPlayBody = [&](const HttpResponseMeta& meta, char* body, size_t bodyLen,
                            int ttsSampleRate = 0) -> bool {
-        if (!body || bodyLen == 0) return false;
+        if (!body || bodyLen == 0) {
+            Serial.println("[TTS] Empty response body");
+            return false;
+        }
 
         bool isJson = str_contains_nocase(meta.content_type, "application/json");
         if (!isJson) {
             // Raw audio — prefer known sample rate, fall back to WAV/PCM header detection
+            Serial.printf("[TTS] Raw audio response (%u bytes, type=%s, sampleRate=%d)\n",
+                          (unsigned)bodyLen,
+                          meta.content_type[0] ? meta.content_type : "(unknown)",
+                          ttsSampleRate);
             bool played = false;
             if (ttsSampleRate > 0 && bodyLen >= 2) {
                 M5Cardputer.Speaker.stop();
@@ -1319,32 +1326,46 @@ bool llm_speak_text(const char* text) {
                     while (M5Cardputer.Speaker.isPlaying() && millis() < waitUntil) {
                         delay(10);
                     }
+                } else {
+                    Serial.println("[TTS] playRaw failed");
                 }
             }
             if (!played) played = play_wav_audio((const uint8_t*)body, bodyLen);
             if (!played) played = play_pcm_audio((const uint8_t*)body, bodyLen);
+            if (!played) Serial.println("[TTS] All raw audio playback methods failed");
             heap_caps_free(body);
             return played;
         }
 
+        Serial.printf("[TTS] JSON response (%u bytes), extracting audio...\n", (unsigned)bodyLen);
         String audioB64;
         bool found = extract_audio_b64(body, bodyLen, audioB64);
+        if (!found || audioB64.length() == 0) {
+            Serial.printf("[TTS] Audio B64 extraction failed. Response: %.300s\n", body);
+            heap_caps_free(body);
+            return false;
+        }
         heap_caps_free(body);
-        if (!found || audioB64.length() == 0) return false;
 
+        Serial.printf("[TTS] Extracted B64 audio (%d chars), decoding...\n", audioB64.length());
         size_t maxDecoded = (audioB64.length() * 3) / 4 + 4;
         uint8_t* decoded = (uint8_t*)alloc_prefer_psram(maxDecoded);
-        if (!decoded) return false;
+        if (!decoded) {
+            Serial.println("[TTS] Failed to alloc decode buffer");
+            return false;
+        }
 
         size_t decodedLen = 0;
         if (mbedtls_base64_decode(decoded, maxDecoded, &decodedLen,
                                   (const unsigned char*)audioB64.c_str(), audioB64.length()) != 0) {
+            Serial.println("[TTS] Base64 decode failed");
             heap_caps_free(decoded);
             return false;
         }
 
         bool played = play_wav_audio(decoded, decodedLen);
         if (!played) played = play_pcm_audio(decoded, decodedLen);
+        if (!played) Serial.println("[TTS] Audio playback failed (WAV/PCM)");
         heap_caps_free(decoded);
         return played;
     };
@@ -1365,14 +1386,18 @@ bool llm_speak_text(const char* text) {
         bodyStr.reserve(512);
         serializeJson(doc, bodyStr);
 
-        Serial.printf("[TTS] Requesting %s via %s (voice=%s)\n",
-                      s_tts_provider->name, s_tts_provider->host, voice);
+        Serial.printf("[TTS] Requesting standalone TTS: %s host=%s voice=%s key=%s\n",
+                      s_tts_provider->name, s_tts_provider->host, voice,
+                      s_tts_api_key[0] ? "explicit" : "LLM-fallback");
 
         HttpResponseMeta meta = {};
         char* body = nullptr;
         size_t bodyLen = 0;
         if (!tts_post_json_to_host(s_tts_provider->host, s_tts_provider->tts_path,
-                                   ttsApiKey, bodyStr, &meta, &body, &bodyLen)) return false;
+                                   ttsApiKey, bodyStr, &meta, &body, &bodyLen)) {
+            Serial.printf("[TTS] Standalone TTS HTTP request failed (status=%d)\n", meta.status_code);
+            return false;
+        }
         return tryPlayBody(meta, body, bodyLen, s_tts_provider->tts_sample_rate);
     };
 
@@ -1411,11 +1436,19 @@ bool llm_speak_text(const char* text) {
         bodyStr.reserve(1024);
         serializeJson(doc, bodyStr);
 
+        Serial.printf("[TTS] Trying chat-TTS (modalities=%s) via %s%s\n",
+                      addModalities ? "yes" : "no", llm_host(), llm_path());
+
         HttpResponseMeta meta = {};
         char* body = nullptr;
         size_t bodyLen = 0;
-        if (!tts_post_json(llm_path(), bodyStr, &meta, &body, &bodyLen)) return false;
-        return tryPlayBody(meta, body, bodyLen);
+        if (!tts_post_json(llm_path(), bodyStr, &meta, &body, &bodyLen)) {
+            Serial.println("[TTS] chat-TTS HTTP request failed");
+            return false;
+        }
+        bool ok = tryPlayBody(meta, body, bodyLen);
+        if (!ok) Serial.println("[TTS] chat-TTS response parse/playback failed");
+        return ok;
     };
 
     auto tryAudioSpeech = [&]() -> bool {
@@ -1430,11 +1463,18 @@ bool llm_speak_text(const char* text) {
         bodyStr.reserve(512);
         serializeJson(doc, bodyStr);
 
+        Serial.printf("[TTS] Trying audio/speech via %s%s\n", llm_host(), s_provider->tts_path);
+
         HttpResponseMeta meta = {};
         char* body = nullptr;
         size_t bodyLen = 0;
-        if (!tts_post_json(s_provider->tts_path, bodyStr, &meta, &body, &bodyLen)) return false;
-        return tryPlayBody(meta, body, bodyLen);
+        if (!tts_post_json(s_provider->tts_path, bodyStr, &meta, &body, &bodyLen)) {
+            Serial.println("[TTS] audio/speech HTTP request failed");
+            return false;
+        }
+        bool ok = tryPlayBody(meta, body, bodyLen);
+        if (!ok) Serial.println("[TTS] audio/speech response parse/playback failed");
+        return ok;
     };
 
     if (tryChatTts(false)) return true;
@@ -1451,8 +1491,13 @@ bool stt_transcribe_file(const char* file_path, char** out_text, size_t* out_len
     *out_text = nullptr;
     *out_len = 0;
 
-    if (!s_stt_provider || !s_stt_api_key[0]) {
-        Serial.println("[STT] Not configured");
+    const char* sttApiKey = s_stt_api_key[0] ? s_stt_api_key : s_api_key;
+    if (!s_stt_provider) {
+        Serial.println("[STT] No STT provider configured");
+        return false;
+    }
+    if (!sttApiKey[0]) {
+        Serial.println("[STT] No STT API key (and no LLM key to fall back to)");
         return false;
     }
     if (!file_path || !file_path[0]) return false;
@@ -1469,6 +1514,9 @@ bool stt_transcribe_file(const char* file_path, char** out_text, size_t* out_len
     }
     Serial.printf("[STT] Transcribing %s (%u bytes) via %s\n",
                   file_path, (unsigned)fileSize, s_stt_provider->name);
+    Serial.printf("[STT] POST https://%s%s model=%s key=%s\n",
+                  s_stt_provider->host, s_stt_provider->stt_path,
+                  model, s_stt_api_key[0] ? "explicit" : "LLM-fallback");
 
     const char* model = stt_current_model();
     const char* boundary = "----M5ClawSttBoundary";
@@ -1502,7 +1550,7 @@ bool stt_transcribe_file(const char* file_path, char** out_text, size_t* out_len
 
     client.printf("POST %s HTTP/1.1\r\n", s_stt_provider->stt_path);
     client.printf("Host: %s\r\n", s_stt_provider->host);
-    client.printf("Authorization: Bearer %s\r\n", s_stt_api_key);
+    client.printf("Authorization: Bearer %s\r\n", sttApiKey);
     client.printf("Content-Type: multipart/form-data; boundary=%s\r\n", boundary);
     client.printf("Content-Length: %u\r\n", (unsigned)contentLength);
     client.println("Connection: close");
