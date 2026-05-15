@@ -1310,14 +1310,19 @@ bool llm_speak_text(const char* text) {
         }
 
         bool isJson = str_contains_nocase(meta.content_type, "application/json");
+        bool isWav = str_contains_nocase(meta.content_type, "audio/wav");
         if (!isJson) {
-            // Raw audio — prefer known sample rate, fall back to WAV/PCM header detection
-            Serial.printf("[TTS] Raw audio response (%u bytes, type=%s, sampleRate=%d)\n",
+            Serial.printf("[TTS] Audio response (%u bytes, type=%s, sampleRate=%d)\n",
                           (unsigned)bodyLen,
                           meta.content_type[0] ? meta.content_type : "(unknown)",
                           ttsSampleRate);
             bool played = false;
-            if (ttsSampleRate > 0 && bodyLen >= 2) {
+            if (isWav) {
+                // WAV response — decode header first, then play PCM
+                played = play_wav_audio((const uint8_t*)body, bodyLen);
+                if (!played) Serial.println("[TTS] WAV decode failed");
+            }
+            if (!played && ttsSampleRate > 0 && bodyLen >= 2) {
                 M5Cardputer.Speaker.stop();
                 played = M5Cardputer.Speaker.playRaw((const int16_t*)body, bodyLen / 2,
                                                      ttsSampleRate, false, 1, -1, true);
@@ -1330,9 +1335,8 @@ bool llm_speak_text(const char* text) {
                     Serial.println("[TTS] playRaw failed");
                 }
             }
-            if (!played) played = play_wav_audio((const uint8_t*)body, bodyLen);
             if (!played) played = play_pcm_audio((const uint8_t*)body, bodyLen);
-            if (!played) Serial.println("[TTS] All raw audio playback methods failed");
+            if (!played) Serial.println("[TTS] All audio playback methods failed");
             heap_caps_free(body);
             return played;
         }
