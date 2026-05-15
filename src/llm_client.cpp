@@ -103,6 +103,7 @@ struct RequestMediaRef {
 struct HttpResponseMeta {
     int status_code;
     bool chunked;
+    int content_length;
     char content_type[64];
 };
 
@@ -329,6 +330,7 @@ static bool read_http_headers(WiFiClientSecure& client, HttpResponseMeta* meta) 
     if (!meta) return false;
     meta->status_code = 0;
     meta->chunked = false;
+    meta->content_length = -1;
     meta->content_type[0] = '\0';
     char hdr[256];
     int hp = 0;
@@ -355,6 +357,8 @@ static bool read_http_headers(WiFiClientSecure& client, HttpResponseMeta* meta) 
                 const char* v = hdr + 18;
                 while (*v == ' ') v++;
                 if (strncasecmp(v, "chunked", 7) == 0) meta->chunked = true;
+            } else if (strncasecmp(hdr, "content-length:", 15) == 0) {
+                meta->content_length = atoi(hdr + 15);
             } else if (strncasecmp(hdr, "content-type:", 13) == 0) {
                 const char* v = hdr + 13;
                 while (*v == ' ') v++;
@@ -372,15 +376,23 @@ static bool read_http_headers(WiFiClientSecure& client, HttpResponseMeta* meta) 
 struct ChunkedReader {
     WiFiClientSecure& client;
     bool chunked;
+    int contentLen;
     int remaining;
+    int bytesRead;
     bool eof;
 
-    ChunkedReader(WiFiClientSecure& c, bool isChunked)
-        : client(c), chunked(isChunked), remaining(isChunked ? -1 : 0), eof(false) {}
+    ChunkedReader(WiFiClientSecure& c, bool isChunked, int contentLength = -1)
+        : client(c), chunked(isChunked), contentLen(contentLength), remaining(isChunked ? -1 : 0), bytesRead(0), eof(false) {}
 
     int readByte() {
         if (eof || is_aborted()) return -1;
-        if (!chunked) return rawRead();
+        if (!chunked) {
+            if (contentLen >= 0 && bytesRead >= contentLen) return -1;
+            int c = rawRead();
+            if (c >= 0) bytesRead++;
+            else eof = true;
+            return c;
+        }
         if (remaining == 0) { skipTrailer(); remaining = -1; }
         if (remaining < 0) {
             remaining = nextChunkSize();
@@ -931,14 +943,14 @@ static bool process_openai_stream(ChunkedReader& reader, LlmResponse* resp,
     return got_response;
 }
 
-static bool read_json_body(WiFiClientSecure& client, bool chunked, char** outBuf, size_t* outLen, size_t maxLen) {
+static bool read_json_body(WiFiClientSecure& client, bool chunked, int contentLength, char** outBuf, size_t* outLen, size_t maxLen) {
     *outBuf = nullptr;
     *outLen = 0;
     char* buf = (char*)alloc_prefer_psram(maxLen + 1);
     if (!buf) return false;
 
     size_t len = 0;
-    ChunkedReader reader(client, chunked);
+    ChunkedReader reader(client, chunked, contentLength);
     while (len < maxLen) {
         int c = reader.readByte();
         if (c < 0) break;
@@ -947,6 +959,7 @@ static bool read_json_body(WiFiClientSecure& client, bool chunked, char** outBuf
     buf[len] = '\0';
     *outBuf = buf;
     *outLen = len;
+    if (len == 0) Serial.println("[HTTP] Body read returned 0 bytes");
     return len > 0;
 }
 
@@ -1072,7 +1085,7 @@ bool llm_chat_tools(const char* system_prompt,
     if (meta.status_code < 200 || meta.status_code >= 300) {
         char* errBody = nullptr;
         size_t errLen = 0;
-        if (read_json_body(client, meta.chunked, &errBody, &errLen, kErrorBodyPreviewMax) && errBody) {
+        if (read_json_body(client, meta.chunked, meta.content_length, &errBody, &errLen, kErrorBodyPreviewMax) && errBody) {
             Serial.printf("[LLM] Error body: %.400s\n", errBody);
             heap_caps_free(errBody);
         }
@@ -1083,7 +1096,7 @@ bool llm_chat_tools(const char* system_prompt,
     if (str_contains_nocase(meta.content_type, "application/json")) {
         char* jsonBody = nullptr;
         size_t jsonLen = 0;
-        bool ok = read_json_body(client, meta.chunked, &jsonBody, &jsonLen, 256 * 1024);
+        bool ok = read_json_body(client, meta.chunked, meta.content_length, &jsonBody, &jsonLen, 256 * 1024);
         client.stop();
         if (!ok || !jsonBody) return false;
         bool parsed = parse_openai_json_response(jsonBody, jsonLen, resp);
@@ -1139,7 +1152,7 @@ static bool tts_post_json(const char* path, const String& bodyStr,
 
     char* respBody = nullptr;
     size_t respLen = 0;
-    bool ok = read_json_body(client, localMeta.chunked, &respBody, &respLen, 256 * 1024);
+    bool ok = read_json_body(client, localMeta.chunked, localMeta.content_length, &respBody, &respLen, 256 * 1024);
     client.stop();
     if (meta) *meta = localMeta;
     if (!ok || !respBody) return false;
@@ -1269,7 +1282,7 @@ static bool tts_post_json_to_host(const char* host, const char* path,
 
     char* respBody = nullptr;
     size_t respLen = 0;
-    bool ok = read_json_body(client, localMeta.chunked, &respBody, &respLen, 256 * 1024);
+    bool ok = read_json_body(client, localMeta.chunked, localMeta.content_length, &respBody, &respLen, 256 * 1024);
     client.stop();
     if (meta) *meta = localMeta;
     if (!ok || !respBody) return false;
@@ -1384,7 +1397,7 @@ bool llm_speak_text(const char* text) {
         doc["model"] = model;
         doc["input"] = clipped;
         doc["voice"] = voice;
-        doc["response_format"] = "pcm16";
+        doc["response_format"] = "wav";
 
         String bodyStr;
         bodyStr.reserve(512);
@@ -1461,7 +1474,7 @@ bool llm_speak_text(const char* text) {
         doc["input"] = clipped;
         doc["voice"] = s_provider->tts_voice;
         doc["format"] = "pcm16";
-        doc["response_format"] = "pcm16";
+        doc["response_format"] = "wav";
 
         String bodyStr;
         bodyStr.reserve(512);
@@ -1604,7 +1617,7 @@ bool stt_transcribe_file(const char* file_path, char** out_text, size_t* out_len
     if (meta.status_code < 200 || meta.status_code >= 300) {
         char* errBody = nullptr;
         size_t errLen = 0;
-        if (read_json_body(client, meta.chunked, &errBody, &errLen, kErrorBodyPreviewMax) && errBody) {
+        if (read_json_body(client, meta.chunked, meta.content_length, &errBody, &errLen, kErrorBodyPreviewMax) && errBody) {
             Serial.printf("[STT] Error body: %.400s\n", errBody);
             heap_caps_free(errBody);
         }
@@ -1614,7 +1627,7 @@ bool stt_transcribe_file(const char* file_path, char** out_text, size_t* out_len
 
     char* respBody = nullptr;
     size_t respLen = 0;
-    if (!read_json_body(client, meta.chunked, &respBody, &respLen, 256 * 1024)) {
+    if (!read_json_body(client, meta.chunked, meta.content_length, &respBody, &respLen, 256 * 1024)) {
         client.stop();
         return false;
     }
