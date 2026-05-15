@@ -1217,9 +1217,11 @@ static bool tts_post_json_to_host(const char* host, const char* path,
 }
 
 bool llm_speak_text(const char* text) {
-    if (!text || !text[0] || s_api_key[0] == '\0' || WiFi.status() != WL_CONNECTED) return false;
-    if (!s_provider || !s_provider->has_tts) {
-        Serial.printf("[TTS] Provider '%s' does not support TTS\n", s_provider ? s_provider->name : "none");
+    if (!text || !text[0] || WiFi.status() != WL_CONNECTED) return false;
+
+    const char* ttsApiKey = s_tts_api_key[0] ? s_tts_api_key : s_api_key;
+    if (ttsApiKey[0] == '\0') {
+        Serial.println("[TTS] No API key configured");
         return false;
     }
 
@@ -1228,12 +1230,26 @@ bool llm_speak_text(const char* text) {
         clipped = clipped.substring(0, M5CLAW_TTS_TEXT_MAX);
     }
 
-    auto tryPlayBody = [&](const HttpResponseMeta& meta, char* body, size_t bodyLen) -> bool {
+    auto tryPlayBody = [&](const HttpResponseMeta& meta, char* body, size_t bodyLen,
+                           int ttsSampleRate = 0) -> bool {
         if (!body || bodyLen == 0) return false;
 
         bool isJson = str_contains_nocase(meta.content_type, "application/json");
         if (!isJson) {
-            bool played = play_wav_audio((const uint8_t*)body, bodyLen);
+            // Raw audio — prefer known sample rate, fall back to WAV/PCM header detection
+            bool played = false;
+            if (ttsSampleRate > 0 && bodyLen >= 2) {
+                M5Cardputer.Speaker.stop();
+                played = M5Cardputer.Speaker.playRaw((const int16_t*)body, bodyLen / 2,
+                                                     ttsSampleRate, false, 1, -1, true);
+                if (played) {
+                    unsigned long waitUntil = millis() + (bodyLen * 1000UL / 2 / ttsSampleRate) + 1500;
+                    while (M5Cardputer.Speaker.isPlaying() && millis() < waitUntil) {
+                        delay(10);
+                    }
+                }
+            }
+            if (!played) played = play_wav_audio((const uint8_t*)body, bodyLen);
             if (!played) played = play_pcm_audio((const uint8_t*)body, bodyLen);
             heap_caps_free(body);
             return played;
@@ -1260,6 +1276,47 @@ bool llm_speak_text(const char* text) {
         heap_caps_free(decoded);
         return played;
     };
+
+    // ── Standalone TTS provider (e.g. SiliconFlow) ──
+    auto tryTtsProvider = [&]() -> bool {
+        if (!s_tts_provider) return false;
+
+        const char* voice = tts_current_voice();
+        JsonDocument doc;
+        doc["model"] = s_tts_provider->tts_model;
+        doc["input"] = clipped;
+        doc["voice"] = voice;
+        doc["response_format"] = "pcm16";
+
+        String bodyStr;
+        bodyStr.reserve(512);
+        serializeJson(doc, bodyStr);
+
+        Serial.printf("[TTS] Requesting %s via %s (voice=%s)\n",
+                      s_tts_provider->name, s_tts_provider->host, voice);
+
+        HttpResponseMeta meta = {};
+        char* body = nullptr;
+        size_t bodyLen = 0;
+        if (!tts_post_json_to_host(s_tts_provider->host, s_tts_provider->tts_path,
+                                   ttsApiKey, bodyStr, &meta, &body, &bodyLen)) return false;
+        return tryPlayBody(meta, body, bodyLen, s_tts_provider->tts_sample_rate);
+    };
+
+    // Try standalone TTS provider first if configured
+    if (s_tts_provider) {
+        if (tryTtsProvider()) return true;
+        Serial.println("[TTS] Standalone TTS provider failed, trying LLM provider fallback...");
+    }
+
+    // ── LLM provider TTS (existing behavior) ──
+    if (!s_provider || !s_provider->has_tts) {
+        if (!s_tts_provider) {
+            Serial.printf("[TTS] No TTS provider configured and LLM provider '%s' does not support TTS\n",
+                          s_provider ? s_provider->name : "none");
+        }
+        return false;
+    }
 
     auto tryChatTts = [&](bool addModalities) -> bool {
         JsonDocument doc;
