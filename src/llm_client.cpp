@@ -1341,7 +1341,7 @@ bool llm_speak_text(const char* text) {
             return played;
         }
 
-        Serial.printf("[TTS] JSON response (%u bytes), extracting audio...\n", (unsigned)bodyLen);
+        Serial.printf("[TTS] JSON response (%u bytes):\n%.500s\n", (unsigned)bodyLen, body);
         String audioB64;
         bool found = extract_audio_b64(body, bodyLen, audioB64);
         if (!found || audioB64.length() == 0) {
@@ -1623,6 +1623,7 @@ bool stt_transcribe_file(const char* file_path, char** out_text, size_t* out_len
     if (!respBody || respLen == 0) return false;
 
     // Parse JSON response: {"text": "..."}
+    Serial.printf("[STT] Response body: %.*s\n", (int)(respLen > 600 ? 600 : respLen), respBody);
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, respBody, respLen);
     if (err) {
