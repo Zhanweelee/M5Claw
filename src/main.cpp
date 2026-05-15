@@ -569,8 +569,8 @@ void setup() {
     Config::load();
     MemoryStore::init();
     Config::importBootstrapFile();
-    bool configChanged = Config::applyDefaults();
-    configChanged |= fillBuildTimeDefaults();
+    bool configChanged = fillBuildTimeDefaults();
+    configChanged |= Config::applyDefaults();
     if (configChanged) {
         Config::save();
     }
