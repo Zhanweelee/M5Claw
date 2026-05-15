@@ -956,11 +956,17 @@ static bool read_json_body(WiFiClientSecure& client, bool chunked, int contentLe
         allocSize = maxLen;
     }
 
-    char* buf = (char*)alloc_prefer_psram(allocSize);
-    if (!buf) {
-        Serial.printf("[HTTP] Body alloc failed (want %u bytes)\n", (unsigned)allocSize);
-        return false;
+    char* buf = nullptr;
+    size_t attemptSize = allocSize;
+    while (!buf && attemptSize >= 4096) {
+        buf = (char*)alloc_prefer_psram(attemptSize);
+        if (!buf) {
+            Serial.printf("[HTTP] Alloc %u failed\n", (unsigned)attemptSize);
+            attemptSize = attemptSize * 2 / 3;
+        }
     }
+    if (!buf) return false;
+    allocSize = attemptSize;
 
     size_t len = 0;
     ChunkedReader reader(client, chunked, contentLength);
