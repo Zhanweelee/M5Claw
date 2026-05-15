@@ -8,8 +8,8 @@ Designed to be flashed once and run long-term — not a one-shot demo. Ships wit
 
 - **Companion screen** — time, battery, weather with dynamic day/night scenes
 - **Keyboard chat** — type queries, stream AI replies token-by-token
-- **Voice input** — hold `Fn` to record, release to send audio for transcription & response
-- **TTS playback** — local AI replies from voice input are spoken aloud
+- **Voice input** — hold `Fn` to record, release to send audio for transcription & response. Uses standalone STT provider (SiliconFlow) with API key fallback to LLM key when no explicit STT key is configured
+- **TTS playback** — AI replies from voice input are spoken aloud via standalone TTS provider (SiliconFlow). Audio streams directly to SPIFFS to avoid heap fragmentation on ESP32; WAV header is parsed for correct sample rate/channels before PCM playback
 - **WeChat bridge** — iLink-protocol bot: send/receive messages, QR pairing, proactive push
 - **Image handling** — WeChat images are downloaded and sent as multimodal input to the model
 - **Persistent memory & persona** — `SOUL.md`, `USER.md`, `MEMORY.md` define personality, user profile, and long-term memory
@@ -51,10 +51,11 @@ Designed to be flashed once and run long-term — not a one-shot demo. Ships wit
 │  └───────┘ └───────┘ └──────────┘              │
 │                                                 │
 │  ┌──────────┐  ┌──────────┐  ┌───────────┐     │
-│  │LLM Client│  │TTS Client│  │WeChat Bot │     │
-│  │(multi-   │  │(provider │  │(iLink)    │     │
-│  │provider) │  │ aware)   │  │           │     │
-│  └──────────┘  └──────────┘  └───────────┘     │
+│  │LLM Client│  │TTS/STT   │  │WeChat Bot │     │
+│  │(multi-   │  │Client    │  │(iLink)    │     │
+│  │provider) │  │(provider │  │           │     │
+│  └──────────┘  │ aware)   │  └───────────┘     │
+│                └──────────┘                    │
 │                                                 │
 │  ┌──────────┐  ┌──────────┐  ┌───────────┐     │
 │  │Cron      │  │Heartbeat │  │Weather    │     │
@@ -100,7 +101,7 @@ Requests use OpenAI-compatible JSON format. Responses are parsed as SSE streams 
 .
 ├── src/                  Firmware source
 │   ├── main.cpp          Entry point, UI, setup flow, serial CLI
-│   ├── llm_client.*      Multi-provider LLM & TTS client
+│   ├── llm_client.*      Multi-provider LLM, TTS & STT client
 │   ├── agent.*           Tool-calling agent loop
 │   ├── config.*          NVS-backed configuration
 │   ├── tool_registry.*   Built-in tool implementations
@@ -150,6 +151,9 @@ The script will interactively prompt for:
 - Wi-Fi credentials (primary + optional backup)
 - LLM provider (MiMo / DeepSeek / OpenAI / Custom)
 - API key and model
+- Assistant name (displayed in system prompt)
+- TTS provider, key, model, voice (standalone TTS, e.g. SiliconFlow)
+- STT provider, key, model (standalone STT, e.g. SiliconFlow)
 - City (for weather)
 
 Config is cached to `.flash_cache.json` (gitignored) for reuse on the next flash.
@@ -282,6 +286,14 @@ set_wifi2 <ssid> <pass>       Set backup Wi-Fi
 set_provider <id>             Set LLM provider (mimo/deepseek/openai/custom)
 set_llm_key <key>             Set API key
 set_llm_model <model>         Set model name
+set_assistant_name <name>     Set assistant display name
+set_tts_provider <id>         Set TTS provider (siliconflow)
+set_tts_key <key>             Set TTS API key
+set_tts_model <model>         Set TTS model override
+set_tts_voice <voice>         Set TTS voice override
+set_stt_provider <id>         Set STT provider (siliconflow)
+set_stt_key <key>             Set STT API key
+set_stt_model <model>         Set STT model override
 set_city <city>               Set city for weather
 set_wechat <token> <host>     Set WeChat credentials
 show_config                   Display current config
