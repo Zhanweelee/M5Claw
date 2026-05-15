@@ -149,6 +149,7 @@
 #define M5CLAW_AUDIO_CHUNK_SAMPLES      1600
 #define M5CLAW_AUDIO_MAX_SECONDS        10
 #define M5CLAW_AUDIO_TEMP_FILE          "/tmp_voice.wav"
+#define M5CLAW_TTS_TEMP_FILE            "/tmp_tts.wav"
 #define M5CLAW_MEDIA_TEMP_PREFIX        "/tmp_"
 #define M5CLAW_MEDIA_DATA_URI_MAX       (3 * 1024 * 1024)
 

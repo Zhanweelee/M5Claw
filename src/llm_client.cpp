@@ -988,6 +988,40 @@ static bool read_json_body(WiFiClientSecure& client, bool chunked, int contentLe
     return len > 0;
 }
 
+static bool read_body_to_spiffs(WiFiClientSecure& client, bool chunked, int contentLength, const char* path) {
+    SPIFFS.remove(path);
+    File f = SPIFFS.open(path, "w");
+    if (!f) {
+        Serial.printf("[HTTP] Cannot open SPIFFS for write: %s\n", path);
+        return false;
+    }
+    ChunkedReader reader(client, chunked, contentLength);
+    uint8_t buf[4096];
+    size_t bufPos = 0;
+    size_t total = 0;
+    while (true) {
+        int c = reader.readByte();
+        if (c < 0) break;
+        buf[bufPos++] = (uint8_t)c;
+        if (bufPos == sizeof(buf)) {
+            if (f.write(buf, sizeof(buf)) != sizeof(buf)) {
+                Serial.println("[HTTP] SPIFFS write failed");
+                f.close();
+                return false;
+            }
+            total += sizeof(buf);
+            bufPos = 0;
+        }
+    }
+    if (bufPos > 0) {
+        f.write(buf, bufPos);
+        total += bufPos;
+    }
+    f.close();
+    Serial.printf("[HTTP] Streamed %u bytes to %s\n", (unsigned)total, path);
+    return total > 0;
+}
+
 static bool parse_openai_json_response(const char* body, size_t bodyLen, LlmResponse* resp) {
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, body, bodyLen);
@@ -1266,6 +1300,109 @@ static bool play_wav_audio(const uint8_t* data, size_t len) {
     return played;
 }
 
+static bool play_wav_from_spiffs(const char* path) {
+    File f = SPIFFS.open(path, "r");
+    if (!f) {
+        Serial.printf("[TTS] Cannot open WAV file: %s\n", path);
+        return false;
+    }
+    size_t fileSize = f.size();
+    if (fileSize < 44) { f.close(); return false; }
+
+    size_t hdrSize = fileSize < 128 ? fileSize : 128;
+    uint8_t hdr[128];
+    if (f.read(hdr, hdrSize) != hdrSize) { f.close(); return false; }
+
+    if (memcmp(hdr, "RIFF", 4) != 0 || memcmp(hdr + 8, "WAVE", 4) != 0) {
+        Serial.println("[TTS] Not a valid WAV file");
+        f.close();
+        return false;
+    }
+
+    uint16_t audioFormat = 0, channels = 1, bitsPerSample = 16;
+    uint32_t sampleRate = 24000;
+    uint32_t pcmOffset = 0, pcmLen = 0;
+
+    size_t pos = 12;
+    while (pos + 8 <= hdrSize) {
+        const uint8_t* chunk = hdr + pos;
+        uint32_t chunkSize = (uint32_t)chunk[4] | ((uint32_t)chunk[5] << 8)
+                           | ((uint32_t)chunk[6] << 16) | ((uint32_t)chunk[7] << 24);
+        if (memcmp(chunk, "fmt ", 4) == 0 && chunkSize >= 16 && pos + 8 + chunkSize <= hdrSize) {
+            const uint8_t* fmt = hdr + pos + 8;
+            audioFormat = (uint16_t)fmt[0] | ((uint16_t)fmt[1] << 8);
+            channels = (uint16_t)fmt[2] | ((uint16_t)fmt[3] << 8);
+            sampleRate = (uint32_t)fmt[4] | ((uint32_t)fmt[5] << 8)
+                       | ((uint32_t)fmt[6] << 16) | ((uint32_t)fmt[7] << 24);
+            bitsPerSample = (uint16_t)fmt[14] | ((uint16_t)fmt[15] << 8);
+        } else if (memcmp(chunk, "data", 4) == 0) {
+            pcmOffset = pos + 8;
+            pcmLen = chunkSize;
+            if (pcmOffset + pcmLen > fileSize) pcmLen = fileSize - pcmOffset;
+            break;
+        }
+        pos += 8 + chunkSize + (chunkSize & 1U);
+    }
+
+    if (!pcmLen || audioFormat != 1 || bitsPerSample != 16 || sampleRate == 0) {
+        Serial.printf("[TTS] Bad WAV: fmt=%u ch=%u rate=%u bps=%u pcm=%u/%u\n",
+                      audioFormat, channels, sampleRate, bitsPerSample,
+                      (unsigned)pcmOffset, (unsigned)pcmLen);
+        f.close();
+        return false;
+    }
+
+    Serial.printf("[TTS] WAV: %uHz %uch %ubit, PCM %u bytes at offset %u\n",
+                  sampleRate, channels, bitsPerSample, (unsigned)pcmLen, (unsigned)pcmOffset);
+
+    // Try to allocate full PCM buffer (SSL client is already freed, heap should be clean)
+    size_t allocSize = pcmLen + 4;
+    uint8_t* pcmBuf = (uint8_t*)alloc_prefer_psram(allocSize);
+
+    if (pcmBuf) {
+        f.seek(pcmOffset);
+        size_t read = f.read(pcmBuf, pcmLen);
+        f.close();
+        if (read != pcmLen) {
+            Serial.printf("[TTS] PCM read mismatch: got %u expected %u\n", (unsigned)read, (unsigned)pcmLen);
+            heap_caps_free(pcmBuf);
+            return false;
+        }
+        M5Cardputer.Speaker.stop();
+        bool played = M5Cardputer.Speaker.playRaw((const int16_t*)pcmBuf, pcmLen / 2,
+                                                   sampleRate, channels > 1, 1, -1, true);
+        if (played) {
+            unsigned long waitUntil = millis() + (pcmLen * 1000UL / 2 / sampleRate) + 1500;
+            while (M5Cardputer.Speaker.isPlaying() && millis() < waitUntil) {
+                delay(10);
+            }
+        }
+        heap_caps_free(pcmBuf);
+        return played;
+    }
+
+    // Chunked fallback — read and play in 4KB chunks
+    Serial.printf("[TTS] PCM alloc %u failed, chunked playback\n", (unsigned)allocSize);
+    f.seek(pcmOffset);
+    constexpr size_t kChunkBytes = 4096;
+    uint8_t chunk[kChunkBytes];
+    M5Cardputer.Speaker.stop();
+    bool first = true;
+    while (pcmLen > 0) {
+        size_t n = pcmLen < kChunkBytes ? pcmLen : kChunkBytes;
+        f.read(chunk, n);
+        bool ok = M5Cardputer.Speaker.playRaw((const int16_t*)chunk, n / 2,
+                                               sampleRate, channels > 1, 1, -1, !first);
+        if (!ok) { f.close(); return false; }
+        unsigned long chunkMs = n * 1000UL / 2 / sampleRate + 30;
+        delay(chunkMs);
+        pcmLen -= n;
+        first = false;
+    }
+    f.close();
+    return true;
+}
+
 static bool extract_audio_b64(const char* body, size_t bodyLen, String& audioB64) {
     JsonDocument respDoc;
     DeserializationError err = deserializeJson(respDoc, body, bodyLen);
@@ -1325,6 +1462,49 @@ static bool tts_post_json_to_host(const char* host, const char* path,
     *body = respBody;
     *bodyLen = respLen;
     return true;
+}
+
+static bool tts_post_json_to_host_file(const char* host, const char* path,
+                                        const char* api_key, const String& bodyStr,
+                                        HttpResponseMeta* meta, const char* outFile) {
+    WiFiClientSecure client;
+    if (!secure_connect(client, host, 443, "[TTS]")) return false;
+
+    client.printf("POST %s HTTP/1.1\r\n", path);
+    client.printf("Host: %s\r\n", host);
+    client.println("Content-Type: application/json");
+    client.println("Accept: application/json, audio/*, application/octet-stream");
+    client.printf("Authorization: Bearer %s\r\n", api_key);
+    client.printf("Content-Length: %d\r\n", bodyStr.length());
+    client.println("Connection: close");
+    client.println();
+    client.print(bodyStr);
+
+    HttpResponseMeta localMeta = {};
+    if (!read_http_headers(client, &localMeta)) {
+        client.stop();
+        return false;
+    }
+    if (meta) *meta = localMeta;
+
+    if (localMeta.status_code < 200 || localMeta.status_code >= 300) {
+        char* errBody = nullptr;
+        size_t errLen = 0;
+        if (read_json_body(client, localMeta.chunked, localMeta.content_length, &errBody, &errLen, kErrorBodyPreviewMax) && errBody) {
+            Serial.printf("[TTS] HTTP %d host=%s path=%s: %.200s\n",
+                         localMeta.status_code, host, path, errBody);
+            heap_caps_free(errBody);
+        } else {
+            Serial.printf("[TTS] HTTP %d host=%s path=%s (no body)\n",
+                         localMeta.status_code, host, path);
+        }
+        client.stop();
+        return false;
+    }
+
+    bool ok = read_body_to_spiffs(client, localMeta.chunked, localMeta.content_length, outFile);
+    client.stop();
+    return ok;
 }
 
 bool llm_speak_text(const char* text) {
@@ -1434,14 +1614,61 @@ bool llm_speak_text(const char* text) {
                       s_tts_api_key[0] ? "explicit" : "LLM-fallback");
 
         HttpResponseMeta meta = {};
-        char* body = nullptr;
-        size_t bodyLen = 0;
-        if (!tts_post_json_to_host(s_tts_provider->host, s_tts_provider->tts_path,
-                                   ttsApiKey, bodyStr, &meta, &body, &bodyLen)) {
+        if (!tts_post_json_to_host_file(s_tts_provider->host, s_tts_provider->tts_path,
+                                        ttsApiKey, bodyStr, &meta, M5CLAW_TTS_TEMP_FILE)) {
             Serial.printf("[TTS] Standalone TTS HTTP request failed (status=%d)\n", meta.status_code);
+            SPIFFS.remove(M5CLAW_TTS_TEMP_FILE);
             return false;
         }
-        return tryPlayBody(meta, body, bodyLen, s_tts_provider->tts_sample_rate);
+
+        Serial.printf("[TTS] Audio response saved to SPIFFS, type=%s\n",
+                      meta.content_type[0] ? meta.content_type : "(unknown)");
+
+        bool isJson = str_contains_nocase(meta.content_type, "application/json");
+        if (isJson) {
+            // JSON response — read the small file, extract base64 audio, decode, play
+            File jf = SPIFFS.open(M5CLAW_TTS_TEMP_FILE, "r");
+            if (!jf) { SPIFFS.remove(M5CLAW_TTS_TEMP_FILE); return false; }
+            size_t jsz = jf.size();
+            if (jsz == 0 || jsz > 16384) { jf.close(); SPIFFS.remove(M5CLAW_TTS_TEMP_FILE); return false; }
+            char* jbuf = (char*)malloc(jsz + 1);
+            if (!jbuf) { jf.close(); SPIFFS.remove(M5CLAW_TTS_TEMP_FILE); return false; }
+            jf.readBytes(jbuf, jsz);
+            jbuf[jsz] = '\0';
+            jf.close();
+            SPIFFS.remove(M5CLAW_TTS_TEMP_FILE);
+
+            Serial.printf("[TTS] JSON response: %.500s\n", jbuf);
+            String audioB64;
+            bool found = extract_audio_b64(jbuf, jsz, audioB64);
+            free(jbuf);
+            if (!found || audioB64.length() == 0) {
+                Serial.println("[TTS] Audio B64 extraction failed");
+                return false;
+            }
+            Serial.printf("[TTS] Extracted B64 audio (%d chars), decoding...\n", audioB64.length());
+            size_t maxDecoded = (audioB64.length() * 3) / 4 + 4;
+            uint8_t* decoded = (uint8_t*)alloc_prefer_psram(maxDecoded);
+            if (!decoded) { Serial.println("[TTS] Failed to alloc decode buffer"); return false; }
+            size_t decodedLen = 0;
+            if (mbedtls_base64_decode(decoded, maxDecoded, &decodedLen,
+                                      (const unsigned char*)audioB64.c_str(), audioB64.length()) != 0) {
+                Serial.println("[TTS] Base64 decode failed");
+                heap_caps_free(decoded);
+                return false;
+            }
+            bool played = play_wav_audio(decoded, decodedLen);
+            if (!played) played = play_pcm_audio(decoded, decodedLen);
+            if (!played) Serial.println("[TTS] Audio playback failed (WAV/PCM)");
+            heap_caps_free(decoded);
+            return played;
+        }
+
+        // Audio response — play WAV directly from SPIFFS file
+        bool played = play_wav_from_spiffs(M5CLAW_TTS_TEMP_FILE);
+        SPIFFS.remove(M5CLAW_TTS_TEMP_FILE);
+        if (!played) Serial.println("[TTS] WAV playback from SPIFFS failed");
+        return played;
     };
 
     // Try standalone TTS provider first if configured
