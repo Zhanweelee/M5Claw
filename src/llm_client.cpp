@@ -1325,15 +1325,17 @@ static bool play_wav_from_spiffs(const char* path) {
     size_t fileSize = f.size();
     if (fileSize < 44) { f.close(); return false; }
 
-    // Read up to 1024 bytes to find the data chunk — some WAVs carry
-    // metadata (LIST, fact) between fmt and data pushing it past 128.
+    // Some WAV files carry metadata chunks (LIST, fact) between fmt
+    // and data, pushing data past the 128-byte mark. Use a 1024-byte
+    // heap buffer for header scan; freed before the PCM allocation below.
     size_t hdrSize = fileSize < 1024 ? fileSize : 1024;
-    uint8_t hdr[1024];
-    if (f.read(hdr, hdrSize) != hdrSize) { f.close(); return false; }
+    uint8_t* hdr = (uint8_t*)malloc(hdrSize);
+    if (!hdr) { f.close(); return false; }
+    if (f.read(hdr, hdrSize) != hdrSize) { free(hdr); f.close(); return false; }
 
     if (memcmp(hdr, "RIFF", 4) != 0 || memcmp(hdr + 8, "WAVE", 4) != 0) {
         Serial.println("[TTS] Not a valid WAV file");
-        f.close();
+        free(hdr); f.close();
         return false;
     }
 
@@ -1361,6 +1363,7 @@ static bool play_wav_from_spiffs(const char* path) {
         }
         pos += 8 + chunkSize + (chunkSize & 1U);
     }
+    free(hdr);
 
     if (!pcmLen || audioFormat != 1 || bitsPerSample != 16 || sampleRate == 0) {
         Serial.printf("[TTS] Bad WAV: fmt=%u ch=%u rate=%u bps=%u pcm=%u/%u\n",
