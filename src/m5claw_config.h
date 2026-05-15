@@ -52,6 +52,13 @@
 #define M5CLAW_SILICONFLOW_TTS_VOICE   "FunAudioLLM/CosyVoice2-0.5B:alex"
 #define M5CLAW_SILICONFLOW_TTS_SAMPLE_RATE 24000
 
+// STT-only provider IDs
+#define M5CLAW_STT_PROVIDER_SILICONFLOW  "siliconflow"
+
+// STT provider defaults - SiliconFlow
+#define M5CLAW_SILICONFLOW_STT_PATH     "/v1/audio/transcriptions"
+#define M5CLAW_SILICONFLOW_STT_MODEL    "FunAudioLLM/SenseVoiceSmall"
+
 // Backward-compat macro
 #define M5CLAW_LLM_DEFAULT_MODEL       M5CLAW_MIMO_MODEL
 #define M5CLAW_LLM_MAX_TOKENS          4096
@@ -71,6 +78,17 @@
 #endif
 #ifndef USER_TTS_VOICE
 #define USER_TTS_VOICE ""
+#endif
+
+// STT build-time defaults (overridable via -D flags)
+#ifndef USER_STT_PROVIDER
+#define USER_STT_PROVIDER ""
+#endif
+#ifndef USER_STT_KEY
+#define USER_STT_KEY ""
+#endif
+#ifndef USER_STT_MODEL
+#define USER_STT_MODEL ""
 #endif
 
 // Agent SPIFFS swap

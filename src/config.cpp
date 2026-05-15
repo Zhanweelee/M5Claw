@@ -91,6 +91,7 @@ static void writeSecret(const char* key, const String& value) {
 static String ssid, password, ssid2, password2, city;
 static String llmProvider, llmApiKey, llmModel;
 static String ttsProvider, ttsApiKey, ttsModel, ttsVoice;
+static String sttProvider, sttApiKey, sttModel;
 static String wechatToken, wechatApiHost;
 static bool llmApiKeyTransient = false;
 
@@ -125,6 +126,9 @@ bool Config::load() {
     ttsVoice        = prefs.getString("tts_voice", "");
     wechatToken     = readSecret("wc_token");
     wechatApiHost   = prefs.getString("wc_host", "");
+    sttProvider     = prefs.getString("stt_provider", "");
+    sttApiKey       = readSecret("stt_key");
+    sttModel        = prefs.getString("stt_model", "");
     prefs.end();
     llmApiKeyTransient = false;
     return ssid.length() > 0;
@@ -147,6 +151,9 @@ void Config::save() {
     prefs.putString("tts_voice",  ttsVoice);
     writeSecret("wc_token",      wechatToken);
     prefs.putString("wc_host",   wechatApiHost);
+    prefs.putString("stt_provider", sttProvider);
+    writeSecret("stt_key",       sttApiKey);
+    prefs.putString("stt_model",  sttModel);
     prefs.end();
 }
 
@@ -158,6 +165,7 @@ void Config::reset() {
     llmProvider = llmApiKey = llmModel = "";
     ttsProvider = ttsApiKey = ttsModel = ttsVoice = "";
     wechatToken = wechatApiHost = "";
+    sttProvider = sttApiKey = sttModel = "";
     llmApiKeyTransient = false;
 }
 
@@ -226,6 +234,9 @@ const String& Config::getTtsModel()        { return ttsModel; }
 const String& Config::getTtsVoice()        { return ttsVoice; }
 const String& Config::getWechatToken()     { return wechatToken; }
 const String& Config::getWechatApiHost()   { return wechatApiHost; }
+const String& Config::getSttProvider()     { return sttProvider; }
+const String& Config::getSttApiKey()       { return sttApiKey; }
+const String& Config::getSttModel()        { return sttModel; }
 
 void Config::setSSID(const String& s)            { ssid = s; }
 void Config::setPassword(const String& p)        { password = p; }
@@ -241,6 +252,9 @@ void Config::setTtsModel(const String& m)        { ttsModel = m; }
 void Config::setTtsVoice(const String& v)        { ttsVoice = v; }
 void Config::setWechatToken(const String& t)     { wechatToken = t; }
 void Config::setWechatApiHost(const String& h)   { wechatApiHost = h; }
+void Config::setSttProvider(const String& p)     { sttProvider = p; }
+void Config::setSttApiKey(const String& k)       { sttApiKey = k; }
+void Config::setSttModel(const String& m)        { sttModel = m; }
 void Config::setTransientLlmApiKey(const String& k) { llmApiKey = k; llmApiKeyTransient = true; }
 
 bool Config::isValid() { return ssid.length() > 0 && llmApiKey.length() > 0; }

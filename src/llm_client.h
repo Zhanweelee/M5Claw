@@ -33,6 +33,7 @@ struct LlmProviderInfo {
     bool has_web_search;
     int search_max_keyword;
     int search_limit;
+    bool supports_audio_input;
     const char* auth_format;   // nullptr → Bearer; "x-api-key" → x-api-key header
     const char* api_format;    // nullptr → OpenAI-compat; "anthropic" → Anthropic Messages API
 };
@@ -54,6 +55,18 @@ void llm_client_init(const char* api_key, const char* model, const char* provide
 
 void tts_client_init(const char* tts_provider_id, const char* tts_api_key,
                      const char* tts_model, const char* tts_voice);
+
+struct SttProviderInfo {
+    const char* id;
+    const char* name;
+    const char* host;
+    const char* stt_path;
+    const char* stt_model;
+};
+
+void stt_client_init(const char* stt_provider_id, const char* stt_api_key,
+                     const char* stt_model);
+bool stt_transcribe_file(const char* file_path, char** out_text, size_t* out_len);
 
 void llm_client_set_abort_flag(volatile bool* flag);
 
@@ -85,3 +98,10 @@ const TtsProviderInfo* tts_provider_by_id(const char* id);
 const char* tts_current_provider();
 const char* tts_current_model();
 const char* tts_current_voice();
+
+// STT provider queries
+int stt_provider_count();
+const SttProviderInfo* stt_provider_by_index(int idx);
+const SttProviderInfo* stt_provider_by_id(const char* id);
+const char* stt_current_provider();
+const char* stt_current_model();

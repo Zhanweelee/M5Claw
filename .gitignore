@@ -12,6 +12,7 @@ mimi_secrets.h
 .env*
 user_config.ini
 .flash_cache.json
+.deepseek/
 
 # Python 缓存
 __pycache__/

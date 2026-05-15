@@ -378,28 +378,43 @@ def main():
     # 1. Scan ports
     print()
     print("[1/5] Scanning serial ports...")
-    try:
-        raw = subprocess.check_output(["pio", "device", "list"])
-        try:
-            out = raw.decode("gbk")
-        except UnicodeDecodeError:
-            out = raw.decode("utf-8", errors="replace")
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print("Error: could not run pio. Is PlatformIO installed?")
-        sys.exit(1)
 
-    # Match Windows COM ports and Unix /dev/tty* /dev/cu* serial devices
-    raw_ports = set(
-        re.findall(r"^(?:COM\d+|/dev/(?:cu|tty)\.(?:usbmodem|usbserial|usb|ACM)\S*)",
-                   out, re.MULTILINE)
-    )
-    # Filter out debug and Bluetooth pseudo-devices
-    ports = sorted(
-        p for p in raw_ports
-        if "debug" not in p and "Bluetooth" not in p
-    )
+    blocked = {"debug-console", "Bluetooth-Incoming-Port"}
+
+    def scan_ports_pyserial():
+        ports = []
+        try:
+            import serial.tools.list_ports
+            for p in serial.tools.list_ports.comports():
+                if any(b in p.device for b in blocked):
+                    continue
+                if "bluetooth" in p.description.lower() and p.vid is None:
+                    continue
+                ports.append(p.device)
+        except Exception:
+            pass
+        return sorted(ports)
+
+    ports = scan_ports_pyserial()
+
+    # Fallback to pio device list
     if not ports:
-        print("No COM ports detected. Connect the device and try again.")
+        try:
+            raw = subprocess.check_output(["pio", "device", "list"])
+            try:
+                out = raw.decode("gbk")
+            except UnicodeDecodeError:
+                out = raw.decode("utf-8", errors="replace")
+            raw_ports = set(
+                re.findall(r"^(?:COM\d+|/dev/(?:cu|tty)\.(?:usbmodem|usbserial|usb|ACM)\S*)",
+                           out, re.MULTILINE)
+            )
+            ports = sorted(p for p in raw_ports if "debug" not in p and "Bluetooth" not in p)
+        except Exception:
+            pass
+
+    if not ports:
+        print("No serial ports detected. Connect the device and try again.")
         sys.exit(1)
 
     # 2. Select port
