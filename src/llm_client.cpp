@@ -71,6 +71,7 @@ static constexpr int kTtsProviderCount = sizeof(kTtsProviders) / sizeof(kTtsProv
 
 static const TtsProviderInfo* s_tts_provider = nullptr;
 static char s_tts_api_key[320] = {0};
+static char s_tts_model_override[64] = {0};
 static char s_tts_voice_override[64] = {0};
 
 static const char* kMediaPlaceholderPrefix = "__M5CLAW_MEDIA|";
@@ -138,8 +139,22 @@ const char* tts_current_voice() {
     return "";
 }
 
+const char* tts_current_model() {
+    if (s_tts_model_override[0]) return s_tts_model_override;
+    if (s_tts_provider) return s_tts_provider->tts_model;
+    return "";
+}
+
+static void safe_copy(char* dst, size_t sz, const char* src) {
+    if (!dst || !sz) return;
+    if (!src) { dst[0] = '\0'; return; }
+    size_t n = strnlen(src, sz - 1);
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
 void tts_client_init(const char* tts_provider_id, const char* tts_api_key,
-                     const char* tts_voice) {
+                     const char* tts_model, const char* tts_voice) {
     s_tts_provider = tts_provider_by_id(tts_provider_id);
 
     if (tts_api_key && tts_api_key[0]) {
@@ -148,12 +163,13 @@ void tts_client_init(const char* tts_provider_id, const char* tts_api_key,
         s_tts_api_key[0] = '\0';
     }
 
+    safe_copy(s_tts_model_override, sizeof(s_tts_model_override), tts_model ? tts_model : "");
     safe_copy(s_tts_voice_override, sizeof(s_tts_voice_override), tts_voice ? tts_voice : "");
 
     if (s_tts_provider) {
         Serial.printf("[TTS] Init provider=%s host=%s model=%s voice=%s\n",
                       s_tts_provider->name, s_tts_provider->host,
-                      s_tts_provider->tts_model, tts_current_voice());
+                      tts_current_model(), tts_current_voice());
     } else if (tts_provider_id && tts_provider_id[0]) {
         Serial.printf("[TTS] Unknown provider '%s', TTS will use LLM provider fallback\n",
                       tts_provider_id);
@@ -178,14 +194,6 @@ static void* alloc_prefer_psram(size_t size) {
     void* p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!p) p = heap_caps_malloc(size, MALLOC_CAP_8BIT);
     return p;
-}
-
-static void safe_copy(char* dst, size_t sz, const char* src) {
-    if (!dst || !sz) return;
-    if (!src) { dst[0] = '\0'; return; }
-    size_t n = strnlen(src, sz - 1);
-    memcpy(dst, src, n);
-    dst[n] = '\0';
 }
 
 void llm_client_init(const char* api_key, const char* model, const char* provider,
@@ -1282,8 +1290,9 @@ bool llm_speak_text(const char* text) {
         if (!s_tts_provider) return false;
 
         const char* voice = tts_current_voice();
+        const char* model = tts_current_model();
         JsonDocument doc;
-        doc["model"] = s_tts_provider->tts_model;
+        doc["model"] = model;
         doc["input"] = clipped;
         doc["voice"] = voice;
         doc["response_format"] = "pcm16";

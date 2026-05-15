@@ -20,9 +20,34 @@ PROVIDERS = [
 
 PROVIDER_MAP = {p[0]: p for p in PROVIDERS}
 
+TTS_PROVIDERS = [
+    ("",           "Use LLM provider TTS", "", ""),
+    ("siliconflow", "SiliconFlow", "FunAudioLLM/CosyVoice2-0.5B", "FunAudioLLM/CosyVoice2-0.5B:alex"),
+]
+
+TTS_MODELS = {
+    "siliconflow": [
+        "FunAudioLLM/CosyVoice2-0.5B",
+        "fnlp/MOSS-TTSD-v0.5",
+    ],
+}
+
+TTS_VOICES = {
+    "siliconflow": [
+        ("FunAudioLLM/CosyVoice2-0.5B:alex",     "calm male"),
+        ("FunAudioLLM/CosyVoice2-0.5B:benjamin", "deep male"),
+        ("FunAudioLLM/CosyVoice2-0.5B:charles",  "magnetic male"),
+        ("FunAudioLLM/CosyVoice2-0.5B:david",    "cheerful male"),
+        ("FunAudioLLM/CosyVoice2-0.5B:anna",     "calm female"),
+        ("FunAudioLLM/CosyVoice2-0.5B:bella",    "passionate female"),
+        ("FunAudioLLM/CosyVoice2-0.5B:claire",   "gentle female"),
+        ("FunAudioLLM/CosyVoice2-0.5B:diana",    "cheerful female"),
+    ],
+}
+
 MODEL_LIST_ENDPOINTS = {
-    "deepseek":  {"url": "https://api.deepseek.com/models",        "needs_auth": False, "auth_header": "Bearer"},
-    "openai":    {"url": "https://api.openai.com/v1/models",       "needs_auth": True,  "auth_header": "Bearer"},
+    "deepseek":  {"url": "https://api.deepseek.com/models",        "needs_auth": True,  "auth_header": "Authorization"},
+    "openai":    {"url": "https://api.openai.com/v1/models",       "needs_auth": True,  "auth_header": "Authorization"},
     "anthropic": {"url": "https://api.anthropic.com/v1/models",    "needs_auth": True,  "auth_header": "x-api-key"},
 }
 
@@ -95,8 +120,56 @@ def interactive_config(project_dir):
     print()
     print("========================================")
     print("  Device Configuration")
-    print("  (press Enter to use default/cached value)")
     print("========================================")
+    print()
+
+    if cache:
+        print("Cached configuration found:")
+        cached_prov = PROVIDER_MAP.get(cache.get("provider", ""), ("", "Unknown", ""))
+        print(f"  WiFi:        {cache.get('wifi_ssid', '')}")
+        if cache.get("wifi_ssid2"):
+            print(f"  WiFi (alt):  {cache.get('wifi_ssid2', '')}")
+        print(f"  Provider:    {cached_prov[1]}")
+        print(f"  Model:       {cache.get('provider_model', '')}")
+        print(f"  City:        {cache.get('city', '')}")
+        if cache.get("tts_provider"):
+            tts_name = {p[0]: p[1] for p in TTS_PROVIDERS}.get(cache.get("tts_provider", ""), cache.get("tts_provider", ""))
+            print(f"  TTS:         {tts_name}")
+            print(f"  TTS Model:   {cache.get('tts_model', '')}")
+            print(f"  TTS Voice:   {cache.get('tts_voice', '')}")
+        print()
+
+        use_cached = prompt("Use existing config?", "Y").lower()
+        if use_cached != "n" and use_cached != "no":
+            config = dict(cache)
+            pid, pname, _ = PROVIDER_MAP.get(config.get("provider", ""), ("", "Unknown", ""))
+            print()
+            print("-------- Configuration Summary --------")
+            print(f"  WiFi:        {config['wifi_ssid']}")
+            if config.get("wifi_ssid2"):
+                print(f"  WiFi (alt):  {config['wifi_ssid2']}")
+            print(f"  Provider:    {pname}")
+            print(f"  Model:       {config['provider_model']}")
+            print(f"  API Key:     [{'*' * min(len(config.get('provider_api_key', '')), 8)}]")
+            print(f"  City:        {config['city']}")
+            if config.get("tts_provider"):
+                tts_name2 = {p[0]: p[1] for p in TTS_PROVIDERS}.get(config["tts_provider"], config["tts_provider"])
+                print(f"  TTS:         {tts_name2}")
+                print(f"  TTS Model:   {config.get('tts_model', '')}")
+                print(f"  TTS Voice:   {config.get('tts_voice', '')}")
+                if config.get("tts_key"):
+                    print(f"  TTS Key:     [{'*' * min(len(config['tts_key']), 8)}]")
+            print("----------------------------------------")
+
+            ok = prompt("Proceed with flash? (Y/n)", "Y").lower()
+            if ok and ok != "y" and ok != "yes":
+                print("Cancelled")
+                sys.exit(0)
+            save_cache(project_dir, config)
+            return config
+
+    # Edit mode — show the hint about Enter for defaults
+    print("(press Enter to use default/cached value)")
     print()
 
     # WiFi (primary)
@@ -181,6 +254,88 @@ def interactive_config(project_dir):
     # City
     config["city"] = prompt("City", cache.get("city", "Beijing"))
 
+    # ── TTS Configuration ──
+    print()
+    print("TTS (Text-to-Speech) — separate provider for voice output")
+    print("Available TTS providers:")
+    for i, (tid, tname, tmodel, tvoice) in enumerate(TTS_PROVIDERS):
+        if i == 0:
+            print(f"  [0] {tname}")
+        else:
+            print(f"  [{i}] {tname}  (default model: {tmodel}, voice: {tvoice})")
+
+    cached_tts_provider = cache.get("tts_provider", "")
+    default_tts_idx = 0
+    for i, (tid, _, _, _) in enumerate(TTS_PROVIDERS):
+        if tid == cached_tts_provider:
+            default_tts_idx = i
+            break
+
+    tts_input = prompt(f"TTS provider (0-{len(TTS_PROVIDERS)-1})", str(default_tts_idx))
+    try:
+        tts_idx = int(tts_input)
+        if tts_idx < 0 or tts_idx >= len(TTS_PROVIDERS):
+            tts_idx = 0
+    except ValueError:
+        tts_idx = 0
+
+    tts_pid, tts_pname, tts_default_model, tts_default_voice = TTS_PROVIDERS[tts_idx]
+    config["tts_provider"] = tts_pid
+
+    if tts_pid:
+        # TTS API Key
+        cached_tts_key = cache.get("tts_key", "")
+        tts_key = prompt(
+            f"{tts_pname} API Key (empty=use LLM key)",
+            cached_tts_key,
+            sensitive=True
+        )
+        config["tts_key"] = tts_key
+
+        # TTS Model
+        available_models = TTS_MODELS.get(tts_pid, [tts_default_model])
+        cached_tts_model = cache.get("tts_model", "")
+        print()
+        print(f"Available {tts_pname} TTS models:")
+        for i, m in enumerate(available_models, 1):
+            mark = " <-- cached" if m == cached_tts_model else ""
+            print(f"  [{i}] {m}{mark}")
+        print("  [0] Enter model name manually")
+        model_sel = prompt(f"Select TTS model (0-{len(available_models)})",
+                          "0" if not cached_tts_model else "")
+        try:
+            ms = int(model_sel)
+            if 1 <= ms <= len(available_models):
+                config["tts_model"] = available_models[ms - 1]
+            else:
+                config["tts_model"] = prompt("TTS model name", cached_tts_model or tts_default_model)
+        except ValueError:
+            config["tts_model"] = prompt("TTS model name", cached_tts_model or tts_default_model)
+
+        # TTS Voice
+        available_voices = TTS_VOICES.get(tts_pid, [])
+        cached_tts_voice = cache.get("tts_voice", "")
+        print()
+        print(f"Available {tts_pname} voices:")
+        for i, (vid, vdesc) in enumerate(available_voices, 1):
+            mark = " <-- cached" if vid == cached_tts_voice else ""
+            print(f"  [{i}] {vid}  ({vdesc}){mark}")
+        print("  [0] Enter voice name manually")
+        voice_sel = prompt(f"Select TTS voice (0-{len(available_voices)})",
+                          "0" if not cached_tts_voice else "")
+        try:
+            vs = int(voice_sel)
+            if 1 <= vs <= len(available_voices):
+                config["tts_voice"] = available_voices[vs - 1][0]
+            else:
+                config["tts_voice"] = prompt("TTS voice", cached_tts_voice or tts_default_voice)
+        except ValueError:
+            config["tts_voice"] = prompt("TTS voice", cached_tts_voice or tts_default_voice)
+    else:
+        config["tts_key"] = ""
+        config["tts_model"] = ""
+        config["tts_voice"] = ""
+
     # Show summary
     print()
     print("-------- Configuration Summary --------")
@@ -191,6 +346,13 @@ def interactive_config(project_dir):
     print(f"  Model:       {config['provider_model']}")
     print(f"  API Key:     [{'*' * min(len(config['provider_api_key']), 8)}]")
     print(f"  City:        {config['city']}")
+    if config.get("tts_provider"):
+        tts_name = {p[0]: p[1] for p in TTS_PROVIDERS}.get(config["tts_provider"], config["tts_provider"])
+        print(f"  TTS:         {tts_name}")
+        print(f"  TTS Model:   {config.get('tts_model', '')}")
+        print(f"  TTS Voice:   {config.get('tts_voice', '')}")
+        if config.get("tts_key"):
+            print(f"  TTS Key:     [{'*' * min(len(config['tts_key']), 8)}]")
     print("----------------------------------------")
 
     ok = prompt("Proceed with flash? (Y/n)", "Y").lower()
@@ -241,32 +403,36 @@ def main():
         sys.exit(1)
 
     # 2. Select port
-    print()
-    print("Available ports:")
-    for i, p in enumerate(ports, 1):
-        print(f"  [{i}] {p}")
-    print("  [0] Exit")
-    print()
+    if len(ports) == 1:
+        port = ports[0]
+        print(f"\nAuto-selected port: {port}")
+    else:
+        print()
+        print("Available ports:")
+        for i, p in enumerate(ports, 1):
+            print(f"  [{i}] {p}")
+        print("  [0] Exit")
+        print()
 
-    while True:
-        try:
-            sel = input(f"Select port (1-{len(ports)}): ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("Cancelled")
-            sys.exit(0)
-        if sel == "0":
-            print("Cancelled")
-            sys.exit(0)
-        try:
-            idx = int(sel)
-            if 1 <= idx <= len(ports):
-                port = ports[idx - 1]
-                break
-        except ValueError:
-            pass
-        print("Invalid input, try again")
+        while True:
+            try:
+                sel = input(f"Select port (1-{len(ports)}): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("Cancelled")
+                sys.exit(0)
+            if sel == "0":
+                print("Cancelled")
+                sys.exit(0)
+            try:
+                idx = int(sel)
+                if 1 <= idx <= len(ports):
+                    port = ports[idx - 1]
+                    break
+            except ValueError:
+                pass
+            print("Invalid input, try again")
 
-    print(f"Selected: {port}")
+        print(f"Selected: {port}")
 
     # 3. Interactive config
     config = interactive_config(project_dir)
@@ -282,6 +448,10 @@ def main():
         ("M5CLAW_PROVIDER_MODEL",   "provider_model"),
         ("M5CLAW_PROVIDER_API_KEY", "provider_api_key"),
         ("M5CLAW_CITY",             "city"),
+        ("M5CLAW_TTS_PROVIDER",     "tts_provider"),
+        ("M5CLAW_TTS_KEY",          "tts_key"),
+        ("M5CLAW_TTS_MODEL",        "tts_model"),
+        ("M5CLAW_TTS_VOICE",        "tts_voice"),
     ]:
         val = config.get(cfg_key, "").strip()
         if val:
@@ -301,6 +471,8 @@ def main():
     print("[3/5] Building...")
     if config.get("provider"):
         print(f"  Provider: {config['provider']}, Model: {config.get('provider_model', 'default')}")
+    if config.get("tts_provider"):
+        print(f"  TTS: {config['tts_provider']}, Model: {config.get('tts_model', 'default')}, Voice: {config.get('tts_voice', 'default')}")
     if subprocess.run(["pio", "run"], env=build_env).returncode != 0:
         print("Error: build failed")
         sys.exit(1)

@@ -59,6 +59,20 @@
 #define M5CLAW_LLM_TEXT_MAX            (8 * 1024)
 #define M5CLAW_TTS_TEXT_MAX            240
 
+// TTS build-time defaults (overridable via -D flags)
+#ifndef USER_TTS_PROVIDER
+#define USER_TTS_PROVIDER ""
+#endif
+#ifndef USER_TTS_KEY
+#define USER_TTS_KEY ""
+#endif
+#ifndef USER_TTS_MODEL
+#define USER_TTS_MODEL ""
+#endif
+#ifndef USER_TTS_VOICE
+#define USER_TTS_VOICE ""
+#endif
+
 // Agent SPIFFS swap
 #define M5CLAW_AGENT_SWAP_FILE         "/tmp_msgs.json"
 

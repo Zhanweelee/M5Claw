@@ -199,6 +199,24 @@ bool fillBuildTimeDefaults() {
             Serial.printf("[CONFIG] Using built-in key for provider '%s'\n", providerId);
         }
     }
+
+    // TTS build-time defaults
+    if (Config::getTtsProvider().length() == 0 && USER_TTS_PROVIDER[0]) {
+        Config::setTtsProvider(String(USER_TTS_PROVIDER));
+        changed = true;
+    }
+    if (Config::getTtsApiKey().length() == 0 && USER_TTS_KEY[0]) {
+        Config::setTtsApiKey(String(USER_TTS_KEY));
+        changed = true;
+    }
+    if (Config::getTtsModel().length() == 0 && USER_TTS_MODEL[0]) {
+        Config::setTtsModel(String(USER_TTS_MODEL));
+        changed = true;
+    }
+    if (Config::getTtsVoice().length() == 0 && USER_TTS_VOICE[0]) {
+        Config::setTtsVoice(String(USER_TTS_VOICE));
+        changed = true;
+    }
     return changed;
 }
 
@@ -212,7 +230,7 @@ static bool isSensitiveNvsKey(const char* key) {
 // ── M5Burner NVS Configure protocol ──────────────────────────
 static const char* const NVS_KEYS[] = {
     "ssid", "pass", "llm_provider", "llm_key", "llm_model",
-    "city", "tts_provider", "tts_key", "tts_voice",
+    "city", "tts_provider", "tts_key", "tts_model", "tts_voice",
     "wc_token", "wc_host"
 };
 
@@ -224,6 +242,10 @@ static String nvsGet(const char* key) {
     if (strcmp(key, "llm_key") == 0)   return Config::getLlmApiKey();
     if (strcmp(key, "llm_model") == 0) return Config::getLlmModel();
     if (strcmp(key, "city") == 0)      return Config::getCity();
+    if (strcmp(key, "tts_provider") == 0) return Config::getTtsProvider();
+    if (strcmp(key, "tts_key") == 0)   return Config::getTtsApiKey();
+    if (strcmp(key, "tts_model") == 0) return Config::getTtsModel();
+    if (strcmp(key, "tts_voice") == 0) return Config::getTtsVoice();
     if (strcmp(key, "wc_token") == 0)  return Config::getWechatToken();
     if (strcmp(key, "wc_host") == 0)   return Config::getWechatApiHost();
     return "";
@@ -236,6 +258,10 @@ static void nvsSet(const char* key, const char* value) {
     else if (strcmp(key, "llm_key") == 0)   Config::setLlmApiKey(value);
     else if (strcmp(key, "llm_model") == 0) Config::setLlmModel(value);
     else if (strcmp(key, "city") == 0)      Config::setCity(value);
+    else if (strcmp(key, "tts_provider") == 0) Config::setTtsProvider(value);
+    else if (strcmp(key, "tts_key") == 0)   Config::setTtsApiKey(value);
+    else if (strcmp(key, "tts_model") == 0) Config::setTtsModel(value);
+    else if (strcmp(key, "tts_voice") == 0) Config::setTtsVoice(value);
     else if (strcmp(key, "wc_token") == 0)  Config::setWechatToken(value);
     else if (strcmp(key, "wc_host") == 0)   Config::setWechatApiHost(value);
     Config::save();
@@ -288,6 +314,10 @@ void processSerialCommands() {
         Serial.println("  set_provider <id>         - Set LLM provider (mimo/deepseek/openai/custom)");
         Serial.println("  set_llm_key <key>         - Set API key for current provider");
         Serial.println("  set_llm_model <model>     - Set model name");
+        Serial.println("  set_tts_provider <id>     - Set TTS provider (siliconflow / empty=use LLM)");
+        Serial.println("  set_tts_key <key>         - Set TTS API key (empty=use LLM key)");
+        Serial.println("  set_tts_model <model>     - Set TTS model override");
+        Serial.println("  set_tts_voice <voice>     - Set TTS voice override");
         Serial.println("  set_city <city>           - e.g. Beijing");
         Serial.println("  set_wechat <token> <host> - Set WeChat bot credentials");
         Serial.println("  show_config               - Show current config");
@@ -351,7 +381,38 @@ void processSerialCommands() {
                           p->default_model[0] ? p->default_model : "(user-defined)",
                           hasTts, hasSearch);
         }
-        Serial.printf("Current: %s\n", Config::getLlmProvider().c_str());
+        Serial.println();
+        Serial.println("=== TTS Providers ===");
+        for (int i = 0; i < tts_provider_count(); i++) {
+            const TtsProviderInfo* tp = tts_provider_by_index(i);
+            Serial.printf("  %-14s - %s\n", tp->id, tp->name);
+            Serial.printf("    host=%s\n", tp->host);
+            Serial.printf("    default model=%s\n", tp->tts_model);
+            Serial.printf("    default voice=%s\n", tp->tts_voice);
+            if (strcmp(tp->id, M5CLAW_TTS_PROVIDER_SILICONFLOW) == 0) {
+                Serial.println("    --- Available models ---");
+                Serial.println("    FunAudioLLM/CosyVoice2-0.5B (multi-lang, emotion)");
+                Serial.println("    fnlp/MOSS-TTSD-v0.5         (expressive, voice clone)");
+                Serial.println("    --- Available voices (CosyVoice2) ---");
+                Serial.println("    FunAudioLLM/CosyVoice2-0.5B:alex      (calm male)");
+                Serial.println("    FunAudioLLM/CosyVoice2-0.5B:benjamin  (deep male)");
+                Serial.println("    FunAudioLLM/CosyVoice2-0.5B:charles   (magnetic male)");
+                Serial.println("    FunAudioLLM/CosyVoice2-0.5B:david     (cheerful male)");
+                Serial.println("    FunAudioLLM/CosyVoice2-0.5B:anna      (calm female)");
+                Serial.println("    FunAudioLLM/CosyVoice2-0.5B:bella     (passionate female)");
+                Serial.println("    FunAudioLLM/CosyVoice2-0.5B:claire    (gentle female)");
+                Serial.println("    FunAudioLLM/CosyVoice2-0.5B:diana     (cheerful female)");
+            }
+        }
+        const char* curModel = Config::getTtsModel().length() > 0
+                               ? Config::getTtsModel().c_str() : "(default)";
+        const char* curVoice = Config::getTtsVoice().length() > 0
+                               ? Config::getTtsVoice().c_str() : "(default)";
+        Serial.printf("Current TTS: %s  model=%s  voice=%s\n",
+                      Config::getTtsProvider().length() > 0
+                          ? Config::getTtsProvider().c_str() : "(LLM provider)",
+                      curModel, curVoice);
+        Serial.printf("Current LLM: %s\n", Config::getLlmProvider().c_str());
     } else if (cmd == "set_mimo_key" || cmd == "set_llm_key") {
         Config::setLlmApiKey(val); Config::save();
         llm_client_init(Config::getLlmApiKey().c_str(),
@@ -366,6 +427,46 @@ void processSerialCommands() {
                         Config::getLlmProvider().c_str(),
                         nullptr, nullptr);
         Serial.printf("Model: %s\n", val.c_str());
+    } else if (cmd == "set_tts_provider") {
+        const TtsProviderInfo* ttsInfo = tts_provider_by_id(val.c_str());
+        if (val.length() == 0 || ttsInfo) {
+            Config::setTtsProvider(val);
+            Config::save();
+            tts_client_init(Config::getTtsProvider().c_str(),
+                           Config::getTtsApiKey().c_str(),
+                           Config::getTtsModel().c_str(),
+                           Config::getTtsVoice().c_str());
+            if (val.length() == 0) {
+                Serial.println("TTS provider cleared (will use LLM provider TTS)");
+            } else {
+                Serial.printf("TTS provider: %s (model=%s, voice=%s)\n",
+                              ttsInfo->name, ttsInfo->tts_model, ttsInfo->tts_voice);
+            }
+        } else {
+            Serial.printf("Unknown TTS provider '%s'. Use: siliconflow\n", val.c_str());
+            Serial.println("Use 'list_providers' to see all options.");
+        }
+    } else if (cmd == "set_tts_key") {
+        Config::setTtsApiKey(val); Config::save();
+        tts_client_init(Config::getTtsProvider().c_str(),
+                       Config::getTtsApiKey().c_str(),
+                       Config::getTtsModel().c_str(),
+                       Config::getTtsVoice().c_str());
+        Serial.printf("TTS key saved (%d chars)\n", val.length());
+    } else if (cmd == "set_tts_model") {
+        Config::setTtsModel(val); Config::save();
+        tts_client_init(Config::getTtsProvider().c_str(),
+                       Config::getTtsApiKey().c_str(),
+                       Config::getTtsModel().c_str(),
+                       Config::getTtsVoice().c_str());
+        Serial.printf("TTS model: %s\n", val.length() > 0 ? val.c_str() : "(provider default)");
+    } else if (cmd == "set_tts_voice") {
+        Config::setTtsVoice(val); Config::save();
+        tts_client_init(Config::getTtsProvider().c_str(),
+                       Config::getTtsApiKey().c_str(),
+                       Config::getTtsModel().c_str(),
+                       Config::getTtsVoice().c_str());
+        Serial.printf("TTS voice: %s\n", val.length() > 0 ? val.c_str() : "(provider default)");
     } else if (cmd == "set_city") {
         Config::setCity(val); Config::save();
         Serial.printf("City: %s\n", val.c_str());
@@ -392,6 +493,16 @@ void processSerialCommands() {
                       info ? info->name : "unknown");
         Serial.printf("  LLM Model:     %s\n", Config::getLlmModel().c_str());
         Serial.printf("  LLM Key:       [%d chars]\n", Config::getLlmApiKey().length());
+        if (Config::getTtsProvider().length() > 0 || Config::getTtsApiKey().length() > 0) {
+            const TtsProviderInfo* ttsInfo = tts_provider_by_id(Config::getTtsProvider().c_str());
+            Serial.printf("  TTS Provider:  %s (%s)\n", Config::getTtsProvider().c_str(),
+                          ttsInfo ? ttsInfo->name : "unknown");
+            Serial.printf("  TTS Key:       [%d chars]\n", Config::getTtsApiKey().length());
+            if (Config::getTtsModel().length() > 0)
+                Serial.printf("  TTS Model:     %s\n", Config::getTtsModel().c_str());
+            if (Config::getTtsVoice().length() > 0)
+                Serial.printf("  TTS Voice:     %s\n", Config::getTtsVoice().c_str());
+        }
         Serial.printf("  City:          %s\n", Config::getCity().c_str());
         Serial.printf("  WeChat Token:  [%d chars]\n", Config::getWechatToken().length());
         Serial.printf("  WeChat Host:   %s\n", Config::getWechatApiHost().c_str());
@@ -1384,6 +1495,11 @@ void initOnlineServices() {
                     Config::getLlmModel().c_str(),
                     Config::getLlmProvider().c_str(),
                     nullptr, nullptr);
+
+    tts_client_init(Config::getTtsProvider().c_str(),
+                    Config::getTtsApiKey().c_str(),
+                    Config::getTtsModel().c_str(),
+                    Config::getTtsVoice().c_str());
 
     weatherClient.begin(Config::getCity());
     Agent::start();

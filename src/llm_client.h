@@ -53,7 +53,7 @@ void llm_client_init(const char* api_key, const char* model, const char* provide
                      const char* custom_host = nullptr, const char* custom_path = nullptr);
 
 void tts_client_init(const char* tts_provider_id, const char* tts_api_key,
-                     const char* tts_voice);
+                     const char* tts_model, const char* tts_voice);
 
 void llm_client_set_abort_flag(volatile bool* flag);
 
@@ -83,4 +83,5 @@ int tts_provider_count();
 const TtsProviderInfo* tts_provider_by_index(int idx);
 const TtsProviderInfo* tts_provider_by_id(const char* id);
 const char* tts_current_provider();
+const char* tts_current_model();
 const char* tts_current_voice();
