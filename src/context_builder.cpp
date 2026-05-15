@@ -2,20 +2,27 @@
 #include "memory_store.h"
 #include "skill_loader.h"
 #include "m5claw_config.h"
+#include "config.h"
+#include "llm_client.h"
 
 void ContextBuilder::buildSystemPrompt(char* buf, size_t bufSize) {
     String soul = MemoryStore::readSoul();
     String user = MemoryStore::readUser();
     String memory = MemoryStore::readMemory();
 
+    // Build assistant identity line
+    String assistantName = Config::getAssistantName();
+    if (assistantName.length() == 0) assistantName = USER_ASSISTANT_NAME;
+
     size_t off = 0;
 
     off += snprintf(buf + off, bufSize - off,
         "# M5Claw\n\n"
-        "You are MiMo, the Xiaomi AI assistant, running as M5Claw on an M5Stack Cardputer (ESP32-S3, 240x135 screen).\n"
+        "You are %s, running on an M5Stack Cardputer (ESP32-S3, 240x135 screen).\n"
         "You communicate through local keyboard, local voice, and WeChat messenger.\n"
         "You may receive text, images, or audio in the current user turn.\n\n"
-        "Be helpful, accurate, and concise. Keep responses under 200 characters when on local screen.\n\n");
+        "Be helpful, accurate, and concise. Keep responses under 200 characters when on local screen.\n\n",
+        assistantName.c_str());
 
     // Personality
     if (soul.length() > 0) {
@@ -39,7 +46,7 @@ void ContextBuilder::buildSystemPrompt(char* buf, size_t bufSize) {
         "- cron_list: List all scheduled cron jobs.\n"
         "- cron_remove: Remove a cron job by ID.\n"
         "- wechat_send: Send a message to a WeChat user proactively.\n"
-        "- Built-in MiMo web_search is available for current information when needed.\n\n"
+        "- web_search is available for current information when needed.\n\n"
         "cron_add automatically delivers notifications back to the channel and chat where the request originated.\n"
         "For cron_add, do not omit timing fields: use at_epoch or delay_s/delay_minutes for one-shot reminders, and interval_s/interval_minutes for recurring tasks.\n\n");
 

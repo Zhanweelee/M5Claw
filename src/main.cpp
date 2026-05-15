@@ -64,6 +64,18 @@
 #ifndef USER_CITY
 #define USER_CITY ""
 #endif
+#ifndef USER_ASSISTANT_NAME
+#define USER_ASSISTANT_NAME ""
+#endif
+#ifndef USER_STT_PROVIDER
+#define USER_STT_PROVIDER ""
+#endif
+#ifndef USER_STT_KEY
+#define USER_STT_KEY ""
+#endif
+#ifndef USER_STT_MODEL
+#define USER_STT_MODEL ""
+#endif
 
 M5Canvas canvas(&M5Cardputer.Display);
 Companion companion;
@@ -190,6 +202,26 @@ bool fillBuildTimeDefaults() {
         changed = true;
     }
 
+    // Assistant name
+    if (Config::getAssistantName().length() == 0 && USER_ASSISTANT_NAME[0]) {
+        Config::setAssistantName(String(USER_ASSISTANT_NAME));
+        changed = true;
+    }
+
+    // STT build-time defaults
+    if (Config::getSttProvider().length() == 0 && USER_STT_PROVIDER[0]) {
+        Config::setSttProvider(String(USER_STT_PROVIDER));
+        changed = true;
+    }
+    if (Config::getSttApiKey().length() == 0 && USER_STT_KEY[0]) {
+        Config::setSttApiKey(String(USER_STT_KEY));
+        changed = true;
+    }
+    if (Config::getSttModel().length() == 0 && USER_STT_MODEL[0]) {
+        Config::setSttModel(String(USER_STT_MODEL));
+        changed = true;
+    }
+
     // Built-in API key for the current provider
     if (Config::getLlmApiKey().length() == 0) {
         const char* providerId = Config::getLlmProvider().c_str();
@@ -224,13 +256,16 @@ static bool isSensitiveNvsKey(const char* key) {
     return strcmp(key, "pass") == 0
         || strcmp(key, "llm_key") == 0
         || strcmp(key, "tts_key") == 0
+        || strcmp(key, "stt_key") == 0
         || strcmp(key, "wc_token") == 0;
 }
 
 // ── M5Burner NVS Configure protocol ──────────────────────────
 static const char* const NVS_KEYS[] = {
     "ssid", "pass", "llm_provider", "llm_key", "llm_model",
-    "city", "tts_provider", "tts_key", "tts_model", "tts_voice",
+    "city", "assistant_name",
+    "tts_provider", "tts_key", "tts_model", "tts_voice",
+    "stt_provider", "stt_key", "stt_model",
     "wc_token", "wc_host"
 };
 
@@ -242,10 +277,14 @@ static String nvsGet(const char* key) {
     if (strcmp(key, "llm_key") == 0)   return Config::getLlmApiKey();
     if (strcmp(key, "llm_model") == 0) return Config::getLlmModel();
     if (strcmp(key, "city") == 0)      return Config::getCity();
+    if (strcmp(key, "assistant_name") == 0) return Config::getAssistantName();
     if (strcmp(key, "tts_provider") == 0) return Config::getTtsProvider();
     if (strcmp(key, "tts_key") == 0)   return Config::getTtsApiKey();
     if (strcmp(key, "tts_model") == 0) return Config::getTtsModel();
     if (strcmp(key, "tts_voice") == 0) return Config::getTtsVoice();
+    if (strcmp(key, "stt_provider") == 0) return Config::getSttProvider();
+    if (strcmp(key, "stt_key") == 0)   return Config::getSttApiKey();
+    if (strcmp(key, "stt_model") == 0) return Config::getSttModel();
     if (strcmp(key, "wc_token") == 0)  return Config::getWechatToken();
     if (strcmp(key, "wc_host") == 0)   return Config::getWechatApiHost();
     return "";
@@ -258,10 +297,14 @@ static void nvsSet(const char* key, const char* value) {
     else if (strcmp(key, "llm_key") == 0)   Config::setLlmApiKey(value);
     else if (strcmp(key, "llm_model") == 0) Config::setLlmModel(value);
     else if (strcmp(key, "city") == 0)      Config::setCity(value);
+    else if (strcmp(key, "assistant_name") == 0) Config::setAssistantName(value);
     else if (strcmp(key, "tts_provider") == 0) Config::setTtsProvider(value);
     else if (strcmp(key, "tts_key") == 0)   Config::setTtsApiKey(value);
     else if (strcmp(key, "tts_model") == 0) Config::setTtsModel(value);
     else if (strcmp(key, "tts_voice") == 0) Config::setTtsVoice(value);
+    else if (strcmp(key, "stt_provider") == 0) Config::setSttProvider(value);
+    else if (strcmp(key, "stt_key") == 0)   Config::setSttApiKey(value);
+    else if (strcmp(key, "stt_model") == 0) Config::setSttModel(value);
     else if (strcmp(key, "wc_token") == 0)  Config::setWechatToken(value);
     else if (strcmp(key, "wc_host") == 0)   Config::setWechatApiHost(value);
     Config::save();
@@ -318,7 +361,11 @@ void processSerialCommands() {
         Serial.println("  set_tts_key <key>         - Set TTS API key (empty=use LLM key)");
         Serial.println("  set_tts_model <model>     - Set TTS model override");
         Serial.println("  set_tts_voice <voice>     - Set TTS voice override");
+        Serial.println("  set_stt_provider <id>    - Set STT provider (siliconflow / empty=disable)");
+        Serial.println("  set_stt_key <key>        - Set STT API key");
+        Serial.println("  set_stt_model <model>    - Set STT model override");
         Serial.println("  set_city <city>           - e.g. Beijing");
+        Serial.println("  set_assistant_name <name> - Set assistant identity name");
         Serial.println("  set_wechat <token> <host> - Set WeChat bot credentials");
         Serial.println("  show_config               - Show current config");
         Serial.println("  list_providers            - List supported providers");
@@ -376,10 +423,11 @@ void processSerialCommands() {
             const LlmProviderInfo* p = llm_provider_by_index(i);
             const char* hasTts = p->has_tts ? " [TTS]" : "";
             const char* hasSearch = p->has_web_search ? " [Search]" : "";
-            Serial.printf("  %-10s - %s  host=%s  model=%s%s%s\n",
+            const char* hasAudioIn = p->supports_audio_input ? " [AudioIn]" : "";
+            Serial.printf("  %-10s - %s  host=%s  model=%s%s%s%s\n",
                           p->id, p->name, p->host[0] ? p->host : "(user-defined)",
                           p->default_model[0] ? p->default_model : "(user-defined)",
-                          hasTts, hasSearch);
+                          hasTts, hasSearch, hasAudioIn);
         }
         Serial.println();
         Serial.println("=== TTS Providers ===");
@@ -413,6 +461,22 @@ void processSerialCommands() {
                           ? Config::getTtsProvider().c_str() : "(LLM provider)",
                       curModel, curVoice);
         Serial.printf("Current LLM: %s\n", Config::getLlmProvider().c_str());
+        Serial.println();
+        Serial.println("=== STT Providers ===");
+        for (int i = 0; i < stt_provider_count(); i++) {
+            const SttProviderInfo* sp = stt_provider_by_index(i);
+            Serial.printf("  %-14s - %s\n", sp->id, sp->name);
+            Serial.printf("    host=%s\n", sp->host);
+            Serial.printf("    default model=%s\n", sp->stt_model);
+            if (strcmp(sp->id, M5CLAW_STT_PROVIDER_SILICONFLOW) == 0) {
+                Serial.println("    --- Available models ---");
+                Serial.println("    FunAudioLLM/SenseVoiceSmall  (multi-lang, fast)");
+                Serial.println("    TeleAI/TeleSpeechASR         (high accuracy)");
+            }
+        }
+        Serial.printf("Current STT: %s\n",
+                      Config::getSttProvider().length() > 0
+                          ? Config::getSttProvider().c_str() : "(disabled)");
     } else if (cmd == "set_mimo_key" || cmd == "set_llm_key") {
         Config::setLlmApiKey(val); Config::save();
         llm_client_init(Config::getLlmApiKey().c_str(),
@@ -467,9 +531,42 @@ void processSerialCommands() {
                        Config::getTtsModel().c_str(),
                        Config::getTtsVoice().c_str());
         Serial.printf("TTS voice: %s\n", val.length() > 0 ? val.c_str() : "(provider default)");
+    } else if (cmd == "set_stt_provider") {
+        const SttProviderInfo* sttInfo = stt_provider_by_id(val.c_str());
+        if (val.length() == 0 || sttInfo) {
+            Config::setSttProvider(val);
+            Config::save();
+            stt_client_init(Config::getSttProvider().c_str(),
+                           Config::getSttApiKey().c_str(),
+                           Config::getSttModel().c_str());
+            if (val.length() == 0) {
+                Serial.println("STT provider cleared (voice input disabled)");
+            } else {
+                Serial.printf("STT provider: %s (model=%s)\n",
+                              sttInfo->name, sttInfo->stt_model);
+            }
+        } else {
+            Serial.printf("Unknown STT provider '%s'. Use: siliconflow\n", val.c_str());
+            Serial.println("Use 'list_providers' to see all options.");
+        }
+    } else if (cmd == "set_stt_key") {
+        Config::setSttApiKey(val); Config::save();
+        stt_client_init(Config::getSttProvider().c_str(),
+                       Config::getSttApiKey().c_str(),
+                       Config::getSttModel().c_str());
+        Serial.printf("STT key saved (%d chars)\n", val.length());
+    } else if (cmd == "set_stt_model") {
+        Config::setSttModel(val); Config::save();
+        stt_client_init(Config::getSttProvider().c_str(),
+                       Config::getSttApiKey().c_str(),
+                       Config::getSttModel().c_str());
+        Serial.printf("STT model: %s\n", val.length() > 0 ? val.c_str() : "(provider default)");
     } else if (cmd == "set_city") {
         Config::setCity(val); Config::save();
         Serial.printf("City: %s\n", val.c_str());
+    } else if (cmd == "set_assistant_name") {
+        Config::setAssistantName(val); Config::save();
+        Serial.printf("Assistant name: %s\n", val.c_str());
     } else if (cmd == "set_wechat") {
         int sp = val.indexOf(' ');
         if (sp > 0) {
@@ -504,6 +601,16 @@ void processSerialCommands() {
                 Serial.printf("  TTS Voice:     %s\n", Config::getTtsVoice().c_str());
         }
         Serial.printf("  City:          %s\n", Config::getCity().c_str());
+        Serial.printf("  Ast Name:      %s\n", Config::getAssistantName().length() > 0
+                      ? Config::getAssistantName().c_str() : "(default)");
+        if (Config::getSttProvider().length() > 0 || Config::getSttApiKey().length() > 0) {
+            const SttProviderInfo* sttInfo = stt_provider_by_id(Config::getSttProvider().c_str());
+            Serial.printf("  STT Provider:  %s (%s)\n", Config::getSttProvider().c_str(),
+                          sttInfo ? sttInfo->name : "unknown");
+            Serial.printf("  STT Key:       [%d chars]\n", Config::getSttApiKey().length());
+            if (Config::getSttModel().length() > 0)
+                Serial.printf("  STT Model:     %s\n", Config::getSttModel().c_str());
+        }
         Serial.printf("  WeChat Token:  [%d chars]\n", Config::getWechatToken().length());
         Serial.printf("  WeChat Host:   %s\n", Config::getWechatApiHost().c_str());
         Serial.printf("  Valid:         %s\n", Config::isValid() ? "YES" : "NO");
@@ -1500,6 +1607,10 @@ void initOnlineServices() {
                     Config::getTtsApiKey().c_str(),
                     Config::getTtsModel().c_str(),
                     Config::getTtsVoice().c_str());
+
+    stt_client_init(Config::getSttProvider().c_str(),
+                    Config::getSttApiKey().c_str(),
+                    Config::getSttModel().c_str());
 
     weatherClient.begin(Config::getCity());
     Agent::start();

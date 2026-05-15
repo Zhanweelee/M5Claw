@@ -24,10 +24,14 @@ mapping = {
     "deepseek_api_key": "USER_DEEPSEEK_KEY",
     "openai_api_key": "USER_OPENAI_KEY",
     "city": "USER_CITY",
+    "assistant_name": "USER_ASSISTANT_NAME",
     "tts_provider": "USER_TTS_PROVIDER",
     "tts_key": "USER_TTS_KEY",
     "tts_model": "USER_TTS_MODEL",
     "tts_voice": "USER_TTS_VOICE",
+    "stt_provider": "USER_STT_PROVIDER",
+    "stt_key": "USER_STT_KEY",
+    "stt_model": "USER_STT_MODEL",
 }
 
 # Environment variable overrides (flash.py sets these)
@@ -40,10 +44,14 @@ env_override = {
     "M5CLAW_PROVIDER_MODEL":   "provider_model",
     "M5CLAW_PROVIDER_API_KEY": "provider_api_key",
     "M5CLAW_CITY":             "city",
+    "M5CLAW_ASSISTANT_NAME":   "assistant_name",
     "M5CLAW_TTS_PROVIDER":     "tts_provider",
     "M5CLAW_TTS_KEY":          "tts_key",
     "M5CLAW_TTS_MODEL":        "tts_model",
     "M5CLAW_TTS_VOICE":        "tts_voice",
+    "M5CLAW_STT_PROVIDER":     "stt_provider",
+    "M5CLAW_STT_KEY":          "stt_key",
+    "M5CLAW_STT_MODEL":        "stt_model",
 }
 
 flags = []

@@ -89,6 +89,7 @@ static void writeSecret(const char* key, const String& value) {
 }
 
 static String ssid, password, ssid2, password2, city;
+static String assistantName;
 static String llmProvider, llmApiKey, llmModel;
 static String ttsProvider, ttsApiKey, ttsModel, ttsVoice;
 static String sttProvider, sttApiKey, sttModel;
@@ -117,6 +118,7 @@ bool Config::load() {
     ssid2           = prefs.getString("ssid2", "");
     password2       = readSecret("pass2");
     city            = prefs.getString("city", "Beijing");
+    assistantName   = prefs.getString("assistant_name", "");
     llmProvider     = prefs.getString("llm_provider", "");
     llmApiKey       = readSecret("llm_key");
     llmModel        = prefs.getString("llm_model", "");
@@ -141,6 +143,7 @@ void Config::save() {
     prefs.putString("ssid2",     ssid2);
     writeSecret("pass2",         password2);
     prefs.putString("city",      city);
+    prefs.putString("assistant_name", assistantName);
     if (llmApiKeyTransient) prefs.remove("llm_key");
     else writeSecret("llm_key",  llmApiKey);
     prefs.putString("llm_provider", llmProvider);
@@ -162,6 +165,7 @@ void Config::reset() {
     prefs.clear();
     prefs.end();
     ssid = password = ssid2 = password2 = city = "";
+    assistantName = "";
     llmProvider = llmApiKey = llmModel = "";
     ttsProvider = ttsApiKey = ttsModel = ttsVoice = "";
     wechatToken = wechatApiHost = "";
@@ -225,6 +229,7 @@ const String& Config::getPassword()        { return password; }
 const String& Config::getSSID2()           { return ssid2; }
 const String& Config::getPassword2()       { return password2; }
 const String& Config::getCity()            { return city; }
+const String& Config::getAssistantName()     { return assistantName; }
 const String& Config::getLlmProvider()     { return llmProvider; }
 const String& Config::getLlmApiKey()       { return llmApiKey; }
 const String& Config::getLlmModel()        { return llmModel; }
@@ -243,6 +248,7 @@ void Config::setPassword(const String& p)        { password = p; }
 void Config::setSSID2(const String& s)           { ssid2 = s; }
 void Config::setPassword2(const String& p)       { password2 = p; }
 void Config::setCity(const String& c)            { city = c; }
+void Config::setAssistantName(const String& n)    { assistantName = n; }
 void Config::setLlmProvider(const String& p)     { llmProvider = p; }
 void Config::setLlmApiKey(const String& k)       { llmApiKey = k; llmApiKeyTransient = false; }
 void Config::setLlmModel(const String& m)        { llmModel = m; }

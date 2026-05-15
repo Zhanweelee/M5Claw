@@ -202,6 +202,29 @@ static void processRequest(AgentRequest& req, char* system_prompt, char* tool_ou
 
     ContextBuilder::buildSystemPrompt(system_prompt, M5CLAW_CONTEXT_BUF_SIZE);
 
+    // If LLM doesn't support audio input, transcribe voice to text via STT
+    if (req.mediaKind == BUS_MEDIA_AUDIO && !llm_supports_audio_input()) {
+        Serial.println("[AGENT] LLM does not support audio input, transcribing via STT...");
+        char* transcribed = nullptr;
+        size_t transcribedLen = 0;
+        if (stt_transcribe_file(req.mediaPath, &transcribed, &transcribedLen) && transcribed) {
+            free(req.text);
+            req.text = transcribed;
+            req.mediaKind = BUS_MEDIA_NONE;
+            req.mediaPath[0] = '\0';
+            req.mediaMime[0] = '\0';
+        } else {
+            const char* errText = "Voice transcription failed. Please try again or type your message.";
+            Serial.println("[AGENT] STT transcription failed");
+            if (req.callback) req.callback(errText);
+            if (req.exCallback) {
+                AgentResponseInfo info = {errText, req.channel, req.chatId};
+                req.exCallback(&info);
+            }
+            return;
+        }
+    }
+
     const char* sessionId = req.chatId[0] ? req.chatId : "local";
     JsonDocument* messages = nullptr;
     if (!buildInitialMessages(sessionId, req, &messages)) {

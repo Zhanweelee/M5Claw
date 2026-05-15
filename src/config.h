@@ -30,6 +30,9 @@ namespace Config {
     const String& getSttApiKey();
     const String& getSttModel();
 
+    // Assistant identity
+    const String& getAssistantName();
+
     // WeChat
     const String& getWechatToken();
     const String& getWechatApiHost();
@@ -49,6 +52,7 @@ namespace Config {
     void setSttProvider(const String& provider);
     void setSttApiKey(const String& key);
     void setSttModel(const String& model);
+    void setAssistantName(const String& name);
     void setWechatToken(const String& token);
     void setWechatApiHost(const String& host);
     void setTransientLlmApiKey(const String& key);

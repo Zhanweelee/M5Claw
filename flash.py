@@ -45,6 +45,18 @@ TTS_VOICES = {
     ],
 }
 
+STT_PROVIDERS = [
+    ("",           "Disabled (no voice input)", "", ""),
+    ("siliconflow", "SiliconFlow", "FunAudioLLM/SenseVoiceSmall", ""),
+]
+
+STT_MODELS = {
+    "siliconflow": [
+        "FunAudioLLM/SenseVoiceSmall",
+        "TeleAI/TeleSpeechASR",
+    ],
+}
+
 MODEL_LIST_ENDPOINTS = {
     "deepseek":  {"url": "https://api.deepseek.com/models",        "needs_auth": True,  "auth_header": "Authorization"},
     "openai":    {"url": "https://api.openai.com/v1/models",       "needs_auth": True,  "auth_header": "Authorization"},
@@ -132,11 +144,17 @@ def interactive_config(project_dir):
         print(f"  Provider:    {cached_prov[1]}")
         print(f"  Model:       {cache.get('provider_model', '')}")
         print(f"  City:        {cache.get('city', '')}")
+        if cache.get("assistant_name"):
+            print(f"  Ast Name:    {cache.get('assistant_name', '')}")
         if cache.get("tts_provider"):
             tts_name = {p[0]: p[1] for p in TTS_PROVIDERS}.get(cache.get("tts_provider", ""), cache.get("tts_provider", ""))
             print(f"  TTS:         {tts_name}")
             print(f"  TTS Model:   {cache.get('tts_model', '')}")
             print(f"  TTS Voice:   {cache.get('tts_voice', '')}")
+        if cache.get("stt_provider"):
+            stt_name = {p[0]: p[1] for p in STT_PROVIDERS}.get(cache.get("stt_provider", ""), cache.get("stt_provider", ""))
+            print(f"  STT:         {stt_name}")
+            print(f"  STT Model:   {cache.get('stt_model', '')}")
         print()
 
         use_cached = prompt("Use existing config?", "Y").lower()
@@ -152,6 +170,7 @@ def interactive_config(project_dir):
             print(f"  Model:       {config['provider_model']}")
             print(f"  API Key:     [{'*' * min(len(config.get('provider_api_key', '')), 8)}]")
             print(f"  City:        {config['city']}")
+            print(f"  Ast Name:    {config.get('assistant_name', 'M5Claw')}")
             if config.get("tts_provider"):
                 tts_name2 = {p[0]: p[1] for p in TTS_PROVIDERS}.get(config["tts_provider"], config["tts_provider"])
                 print(f"  TTS:         {tts_name2}")
@@ -159,6 +178,12 @@ def interactive_config(project_dir):
                 print(f"  TTS Voice:   {config.get('tts_voice', '')}")
                 if config.get("tts_key"):
                     print(f"  TTS Key:     [{'*' * min(len(config['tts_key']), 8)}]")
+            if config.get("stt_provider"):
+                stt_name2 = {p[0]: p[1] for p in STT_PROVIDERS}.get(config["stt_provider"], config["stt_provider"])
+                print(f"  STT:         {stt_name2}")
+                print(f"  STT Model:   {config.get('stt_model', '')}")
+                if config.get("stt_key"):
+                    print(f"  STT Key:     [{'*' * min(len(config['stt_key']), 8)}]")
             print("----------------------------------------")
 
             ok = prompt("Proceed with flash? (Y/n)", "Y").lower()
@@ -251,6 +276,12 @@ def interactive_config(project_dir):
     else:
         config["provider_model"] = prompt("Model name", cached_model or default_model)
 
+    # Assistant name
+    print()
+    assistant_default = cache.get("assistant_name", "M5Claw")
+    assistant_name = prompt("Assistant name (identity in system prompt)", assistant_default)
+    config["assistant_name"] = assistant_name if assistant_name else "M5Claw"
+
     # City
     config["city"] = prompt("City", cache.get("city", "Beijing"))
 
@@ -336,6 +367,67 @@ def interactive_config(project_dir):
         config["tts_model"] = ""
         config["tts_voice"] = ""
 
+    # ── STT Configuration ──
+    print()
+    print("STT (Speech-to-Text) — voice transcription for providers without native audio input")
+    print("Available STT providers:")
+    for i, (sid, sname, smodel, _) in enumerate(STT_PROVIDERS):
+        if i == 0:
+            print(f"  [0] {sname}")
+        else:
+            print(f"  [{i}] {sname}  (default model: {smodel})")
+
+    cached_stt_provider = cache.get("stt_provider", "")
+    default_stt_idx = 0
+    for i, (sid, _, _, _) in enumerate(STT_PROVIDERS):
+        if sid == cached_stt_provider:
+            default_stt_idx = i
+            break
+
+    stt_input = prompt(f"STT provider (0-{len(STT_PROVIDERS)-1})", str(default_stt_idx))
+    try:
+        stt_idx = int(stt_input)
+        if stt_idx < 0 or stt_idx >= len(STT_PROVIDERS):
+            stt_idx = 0
+    except ValueError:
+        stt_idx = 0
+
+    stt_pid, stt_pname, stt_default_model, _ = STT_PROVIDERS[stt_idx]
+    config["stt_provider"] = stt_pid
+
+    if stt_pid:
+        # STT API Key
+        cached_stt_key = cache.get("stt_key", "")
+        stt_key = prompt(
+            f"{stt_pname} API Key (empty=use LLM key)",
+            cached_stt_key,
+            sensitive=True
+        )
+        config["stt_key"] = stt_key
+
+        # STT Model
+        available_stt_models = STT_MODELS.get(stt_pid, [stt_default_model])
+        cached_stt_model = cache.get("stt_model", "")
+        print()
+        print(f"Available {stt_pname} STT models:")
+        for i, m in enumerate(available_stt_models, 1):
+            mark = " <-- cached" if m == cached_stt_model else ""
+            print(f"  [{i}] {m}{mark}")
+        print("  [0] Enter model name manually")
+        stt_model_sel = prompt(f"Select STT model (0-{len(available_stt_models)})",
+                               "0" if not cached_stt_model else "")
+        try:
+            sms = int(stt_model_sel)
+            if 1 <= sms <= len(available_stt_models):
+                config["stt_model"] = available_stt_models[sms - 1]
+            else:
+                config["stt_model"] = prompt("STT model name", cached_stt_model or stt_default_model)
+        except ValueError:
+            config["stt_model"] = prompt("STT model name", cached_stt_model or stt_default_model)
+    else:
+        config["stt_key"] = ""
+        config["stt_model"] = ""
+
     # Show summary
     print()
     print("-------- Configuration Summary --------")
@@ -346,6 +438,7 @@ def interactive_config(project_dir):
     print(f"  Model:       {config['provider_model']}")
     print(f"  API Key:     [{'*' * min(len(config['provider_api_key']), 8)}]")
     print(f"  City:        {config['city']}")
+    print(f"  Ast Name:    {config.get('assistant_name', 'M5Claw')}")
     if config.get("tts_provider"):
         tts_name = {p[0]: p[1] for p in TTS_PROVIDERS}.get(config["tts_provider"], config["tts_provider"])
         print(f"  TTS:         {tts_name}")
@@ -353,6 +446,12 @@ def interactive_config(project_dir):
         print(f"  TTS Voice:   {config.get('tts_voice', '')}")
         if config.get("tts_key"):
             print(f"  TTS Key:     [{'*' * min(len(config['tts_key']), 8)}]")
+    if config.get("stt_provider"):
+        stt_name = {p[0]: p[1] for p in STT_PROVIDERS}.get(config["stt_provider"], config["stt_provider"])
+        print(f"  STT:         {stt_name}")
+        print(f"  STT Model:   {config.get('stt_model', '')}")
+        if config.get("stt_key"):
+            print(f"  STT Key:     [{'*' * min(len(config['stt_key']), 8)}]")
     print("----------------------------------------")
 
     ok = prompt("Proceed with flash? (Y/n)", "Y").lower()
@@ -463,10 +562,14 @@ def main():
         ("M5CLAW_PROVIDER_MODEL",   "provider_model"),
         ("M5CLAW_PROVIDER_API_KEY", "provider_api_key"),
         ("M5CLAW_CITY",             "city"),
+        ("M5CLAW_ASSISTANT_NAME",   "assistant_name"),
         ("M5CLAW_TTS_PROVIDER",     "tts_provider"),
         ("M5CLAW_TTS_KEY",          "tts_key"),
         ("M5CLAW_TTS_MODEL",        "tts_model"),
         ("M5CLAW_TTS_VOICE",        "tts_voice"),
+        ("M5CLAW_STT_PROVIDER",     "stt_provider"),
+        ("M5CLAW_STT_KEY",          "stt_key"),
+        ("M5CLAW_STT_MODEL",        "stt_model"),
     ]:
         val = config.get(cfg_key, "").strip()
         if val:
@@ -488,6 +591,8 @@ def main():
         print(f"  Provider: {config['provider']}, Model: {config.get('provider_model', 'default')}")
     if config.get("tts_provider"):
         print(f"  TTS: {config['tts_provider']}, Model: {config.get('tts_model', 'default')}, Voice: {config.get('tts_voice', 'default')}")
+    if config.get("stt_provider"):
+        print(f"  STT: {config['stt_provider']}, Model: {config.get('stt_model', 'default')}")
     if subprocess.run(["pio", "run"], env=build_env).returncode != 0:
         print("Error: build failed")
         sys.exit(1)

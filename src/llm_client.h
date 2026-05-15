@@ -82,6 +82,7 @@ bool llm_chat_tools(const char* system_prompt,
                     LlmStreamCallback on_token = nullptr);
 
 bool llm_speak_text(const char* text);
+bool llm_supports_audio_input();
 
 // Provider queries
 int llm_provider_count();

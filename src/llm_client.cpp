@@ -26,35 +26,35 @@ static const LlmProviderInfo kProviders[] = {
         M5CLAW_MIMO_HOST, M5CLAW_MIMO_CHAT_PATH, M5CLAW_MIMO_MODEL,
         true, M5CLAW_MIMO_TTS_PATH, M5CLAW_MIMO_TTS_MODEL, M5CLAW_MIMO_TTS_VOICE, M5CLAW_MIMO_TTS_SAMPLE_RATE,
         true, M5CLAW_MIMO_SEARCH_MAX_KEYWORD, M5CLAW_MIMO_SEARCH_LIMIT,
-        nullptr, nullptr
+        true, nullptr, nullptr
     },
     {
         M5CLAW_PROVIDER_DEEPSEEK, "DeepSeek",
         M5CLAW_DEEPSEEK_HOST, M5CLAW_DEEPSEEK_CHAT_PATH, M5CLAW_DEEPSEEK_MODEL,
         false, nullptr, nullptr, nullptr, 0,
         false, 0, 0,
-        nullptr, nullptr
+        false, nullptr, nullptr
     },
     {
         M5CLAW_PROVIDER_OPENAI, "OpenAI",
         M5CLAW_OPENAI_HOST, M5CLAW_OPENAI_CHAT_PATH, M5CLAW_OPENAI_MODEL,
         false, nullptr, nullptr, nullptr, 0,
         false, 0, 0,
-        nullptr, nullptr
+        false, nullptr, nullptr
     },
     {
         M5CLAW_PROVIDER_ANTHROPIC, "Anthropic",
         M5CLAW_ANTHROPIC_HOST, M5CLAW_ANTHROPIC_CHAT_PATH, M5CLAW_ANTHROPIC_MODEL,
         false, nullptr, nullptr, nullptr, 0,
         false, 0, 0,
-        "x-api-key", "anthropic"
+        false, "x-api-key", "anthropic"
     },
     {
         M5CLAW_PROVIDER_CUSTOM, "Custom",
         "", "/v1/chat/completions", "",
         false, nullptr, nullptr, nullptr, 0,
         false, 0, 0,
-        nullptr, nullptr
+        false, nullptr, nullptr
     },
 };
 static constexpr int kProviderCount = sizeof(kProviders) / sizeof(kProviders[0]);
@@ -68,6 +68,19 @@ static const TtsProviderInfo kTtsProviders[] = {
     },
 };
 static constexpr int kTtsProviderCount = sizeof(kTtsProviders) / sizeof(kTtsProviders[0]);
+
+static const SttProviderInfo kSttProviders[] = {
+    {
+        M5CLAW_STT_PROVIDER_SILICONFLOW, "SiliconFlow",
+        M5CLAW_SILICONFLOW_HOST, M5CLAW_SILICONFLOW_STT_PATH,
+        M5CLAW_SILICONFLOW_STT_MODEL
+    },
+};
+static constexpr int kSttProviderCount = sizeof(kSttProviders) / sizeof(kSttProviders[0]);
+
+static const SttProviderInfo* s_stt_provider = nullptr;
+static char s_stt_api_key[320] = {0};
+static char s_stt_model_override[64] = {0};
 
 static const TtsProviderInfo* s_tts_provider = nullptr;
 static char s_tts_api_key[320] = {0};
@@ -145,6 +158,33 @@ const char* tts_current_model() {
     return "";
 }
 
+// ── STT provider queries ──
+
+int stt_provider_count() { return kSttProviderCount; }
+
+const SttProviderInfo* stt_provider_by_index(int idx) {
+    if (idx < 0 || idx >= kSttProviderCount) return nullptr;
+    return &kSttProviders[idx];
+}
+
+const SttProviderInfo* stt_provider_by_id(const char* id) {
+    if (!id || !id[0]) return nullptr;
+    for (int i = 0; i < kSttProviderCount; i++) {
+        if (strcasecmp(kSttProviders[i].id, id) == 0) return &kSttProviders[i];
+    }
+    return nullptr;
+}
+
+const char* stt_current_provider() {
+    return s_stt_provider ? s_stt_provider->id : "";
+}
+
+const char* stt_current_model() {
+    if (s_stt_model_override[0]) return s_stt_model_override;
+    if (s_stt_provider) return s_stt_provider->stt_model;
+    return "";
+}
+
 static void safe_copy(char* dst, size_t sz, const char* src) {
     if (!dst || !sz) return;
     if (!src) { dst[0] = '\0'; return; }
@@ -176,6 +216,26 @@ void tts_client_init(const char* tts_provider_id, const char* tts_api_key,
     }
 }
 
+void stt_client_init(const char* stt_provider_id, const char* stt_api_key,
+                     const char* stt_model) {
+    s_stt_provider = stt_provider_by_id(stt_provider_id);
+
+    if (stt_api_key && stt_api_key[0]) {
+        safe_copy(s_stt_api_key, sizeof(s_stt_api_key), stt_api_key);
+    } else {
+        s_stt_api_key[0] = '\0';
+    }
+
+    safe_copy(s_stt_model_override, sizeof(s_stt_model_override), stt_model ? stt_model : "");
+
+    if (s_stt_provider) {
+        Serial.printf("[STT] Init provider=%s host=%s model=%s\n",
+                      s_stt_provider->name, s_stt_provider->host, stt_current_model());
+    } else if (stt_provider_id && stt_provider_id[0]) {
+        Serial.printf("[STT] Unknown provider '%s'\n", stt_provider_id);
+    }
+}
+
 static const char* llm_host() {
     if (s_custom_host[0]) return s_custom_host;
     if (s_provider && s_provider->host[0]) return s_provider->host;
@@ -189,6 +249,10 @@ static const char* llm_path() {
 }
 
 const char* llm_current_host() { return llm_host(); }
+
+bool llm_supports_audio_input() {
+    return s_provider && s_provider->supports_audio_input;
+}
 
 static void* alloc_prefer_psram(size_t size) {
     void* p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -1379,4 +1443,150 @@ bool llm_speak_text(const char* text) {
 
     Serial.println("[TTS] No playable audio in response");
     return false;
+}
+
+// ── STT (Speech-to-Text) ──
+
+bool stt_transcribe_file(const char* file_path, char** out_text, size_t* out_len) {
+    *out_text = nullptr;
+    *out_len = 0;
+
+    if (!s_stt_provider || !s_stt_api_key[0]) {
+        Serial.println("[STT] Not configured");
+        return false;
+    }
+    if (!file_path || !file_path[0]) return false;
+
+    File f = SPIFFS.open(file_path, "r");
+    if (!f) {
+        Serial.printf("[STT] Cannot open file: %s\n", file_path);
+        return false;
+    }
+    size_t fileSize = f.size();
+    if (fileSize == 0) {
+        f.close();
+        return false;
+    }
+    Serial.printf("[STT] Transcribing %s (%u bytes) via %s\n",
+                  file_path, (unsigned)fileSize, s_stt_provider->name);
+
+    const char* model = stt_current_model();
+    const char* boundary = "----M5ClawSttBoundary";
+    const char* crlf = "\r\n";
+
+    // Pre-calculate Content-Length
+    size_t part1 = 0;  // --boundary + headers for file field
+    part1 += strlen("--") + strlen(boundary) + strlen(crlf);
+    part1 += strlen("Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"") + strlen(crlf);
+    part1 += strlen("Content-Type: audio/wav") + strlen(crlf);
+    part1 += strlen(crlf);
+    part1 += fileSize;
+    part1 += strlen(crlf);
+
+    size_t part2 = 0;  // --boundary + headers for model field
+    part2 += strlen("--") + strlen(boundary) + strlen(crlf);
+    part2 += strlen("Content-Disposition: form-data; name=\"model\"") + strlen(crlf);
+    part2 += strlen(crlf);
+    part2 += strlen(model);
+    part2 += strlen(crlf);
+
+    size_t part3 = strlen("--") + strlen(boundary) + strlen("--") + strlen(crlf);  // closing boundary
+
+    size_t contentLength = part1 + part2 + part3;
+
+    WiFiClientSecure client;
+    if (!secure_connect(client, s_stt_provider->host, 443, "[STT]")) {
+        f.close();
+        return false;
+    }
+
+    client.printf("POST %s HTTP/1.1\r\n", s_stt_provider->stt_path);
+    client.printf("Host: %s\r\n", s_stt_provider->host);
+    client.printf("Authorization: Bearer %s\r\n", s_stt_api_key);
+    client.printf("Content-Type: multipart/form-data; boundary=%s\r\n", boundary);
+    client.printf("Content-Length: %u\r\n", (unsigned)contentLength);
+    client.println("Connection: close");
+    client.println();
+
+    // ── Send part 1: file ──
+    client.printf("--%s\r\n", boundary);
+    client.print("Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n");
+    client.print("Content-Type: audio/wav\r\n");
+    client.print("\r\n");
+
+    uint8_t buf[1024];
+    while (f.available()) {
+        size_t n = f.read(buf, sizeof(buf));
+        if (n == 0) break;
+        size_t written = 0;
+        while (written < n) {
+            if (is_aborted()) { f.close(); client.stop(); return false; }
+            size_t w = client.write(buf + written, n - written);
+            if (w == 0) { delay(1); if (!client.connected()) { f.close(); return false; } continue; }
+            written += w;
+        }
+    }
+    f.close();
+    client.print("\r\n");
+
+    // ── Send part 2: model ──
+    client.printf("--%s\r\n", boundary);
+    client.print("Content-Disposition: form-data; name=\"model\"\r\n");
+    client.print("\r\n");
+    client.print(model);
+    client.print("\r\n");
+
+    // ── Send closing boundary ──
+    client.printf("--%s--\r\n", boundary);
+
+    // ── Read response ──
+    HttpResponseMeta meta = {};
+    if (!read_http_headers(client, &meta)) {
+        client.stop();
+        return false;
+    }
+    Serial.printf("[STT] Response status=%d type=%s\n",
+                  meta.status_code, meta.content_type[0] ? meta.content_type : "(unknown)");
+
+    if (meta.status_code < 200 || meta.status_code >= 300) {
+        char* errBody = nullptr;
+        size_t errLen = 0;
+        if (read_json_body(client, meta.chunked, &errBody, &errLen, kErrorBodyPreviewMax) && errBody) {
+            Serial.printf("[STT] Error body: %.400s\n", errBody);
+            heap_caps_free(errBody);
+        }
+        client.stop();
+        return false;
+    }
+
+    char* respBody = nullptr;
+    size_t respLen = 0;
+    if (!read_json_body(client, meta.chunked, &respBody, &respLen, 256 * 1024)) {
+        client.stop();
+        return false;
+    }
+    client.stop();
+
+    if (!respBody || respLen == 0) return false;
+
+    // Parse JSON response: {"text": "..."}
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, respBody, respLen);
+    if (err) {
+        Serial.printf("[STT] JSON parse error: %s\n", err.c_str());
+        heap_caps_free(respBody);
+        return false;
+    }
+    heap_caps_free(respBody);
+
+    const char* text = doc["text"] | "";
+    if (!text[0]) {
+        Serial.println("[STT] No text in transcription response");
+        return false;
+    }
+
+    *out_len = strlen(text);
+    *out_text = strdup(text);
+    Serial.printf("[STT] Transcription: \"%s\"\n", *out_text);
+    return true;
 }

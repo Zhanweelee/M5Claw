@@ -59,6 +59,11 @@
 #define M5CLAW_SILICONFLOW_STT_PATH     "/v1/audio/transcriptions"
 #define M5CLAW_SILICONFLOW_STT_MODEL    "FunAudioLLM/SenseVoiceSmall"
 
+// Assistant identity
+#ifndef USER_ASSISTANT_NAME
+#define USER_ASSISTANT_NAME "M5Claw"
+#endif
+
 // Backward-compat macro
 #define M5CLAW_LLM_DEFAULT_MODEL       M5CLAW_MIMO_MODEL
 #define M5CLAW_LLM_MAX_TOKENS          4096
