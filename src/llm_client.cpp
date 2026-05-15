@@ -965,8 +965,14 @@ static bool read_json_body(WiFiClientSecure& client, bool chunked, int contentLe
             attemptSize = attemptSize * 2 / 3;
         }
     }
-    if (!buf) return false;
-    allocSize = attemptSize;
+    if (!buf && allocSize < 4096) {
+        buf = (char*)alloc_prefer_psram(allocSize);
+    }
+    if (!buf) {
+        Serial.printf("[HTTP] Alloc %u failed (final)\n", (unsigned)attemptSize > 0 ? (unsigned)attemptSize : (unsigned)allocSize);
+        return false;
+    }
+    if (attemptSize >= 4096) allocSize = attemptSize;
 
     size_t len = 0;
     ChunkedReader reader(client, chunked, contentLength);
