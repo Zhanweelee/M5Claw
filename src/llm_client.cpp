@@ -1514,11 +1514,12 @@ bool stt_transcribe_file(const char* file_path, char** out_text, size_t* out_len
     }
     Serial.printf("[STT] Transcribing %s (%u bytes) via %s\n",
                   file_path, (unsigned)fileSize, s_stt_provider->name);
+
+    const char* model = stt_current_model();
     Serial.printf("[STT] POST https://%s%s model=%s key=%s\n",
                   s_stt_provider->host, s_stt_provider->stt_path,
                   model, s_stt_api_key[0] ? "explicit" : "LLM-fallback");
 
-    const char* model = stt_current_model();
     const char* boundary = "----M5ClawSttBoundary";
     const char* crlf = "\r\n";
 
