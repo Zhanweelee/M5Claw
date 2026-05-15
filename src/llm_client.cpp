@@ -289,6 +289,8 @@ void llm_response_free(LlmResponse* resp) {
     free(resp->text);
     resp->text = nullptr;
     resp->text_len = 0;
+    free(resp->reasoning_content);
+    resp->reasoning_content = nullptr;
     free(resp->raw_content_json);
     resp->raw_content_json = nullptr;
     for (int i = 0; i < resp->call_count; i++) {
@@ -876,6 +878,7 @@ static bool process_openai_stream(ChunkedReader& reader, LlmResponse* resp,
     if (!line) return false;
 
     String tool_inputs[M5CLAW_MAX_TOOL_CALLS];
+    String reasoning;
     bool got_response = false;
 
     while (!is_aborted()) {
@@ -894,6 +897,11 @@ static bool process_openai_stream(ChunkedReader& reader, LlmResponse* resp,
         JsonObject choice = chunk["choices"][0];
         if (choice.isNull()) continue;
         JsonObject delta = choice["delta"];
+
+        const char* rc = delta["reasoning_content"] | (const char*)nullptr;
+        if (rc && rc[0]) {
+            reasoning += rc;
+        }
 
         const char* content = delta["content"] | (const char*)nullptr;
         if (content) {
@@ -937,6 +945,9 @@ static bool process_openai_stream(ChunkedReader& reader, LlmResponse* resp,
     if (resp->call_count > 0) {
         resp->tool_use = true;
         build_tool_response_json(resp);
+    }
+    if (reasoning.length() > 0) {
+        resp->reasoning_content = strdup(reasoning.c_str());
     }
 
     heap_caps_free(line);
@@ -1034,6 +1045,11 @@ static bool parse_openai_json_response(const char* body, size_t bodyLen, LlmResp
     const char* content = message["content"] | (const char*)nullptr;
     if (content && content[0]) {
         if (!text_append(resp, content, strlen(content))) return false;
+    }
+
+    const char* reasoning = message["reasoning_content"] | (const char*)nullptr;
+    if (reasoning && reasoning[0]) {
+        resp->reasoning_content = strdup(reasoning);
     }
 
     JsonArray toolCalls = message["tool_calls"];
@@ -1309,8 +1325,10 @@ static bool play_wav_from_spiffs(const char* path) {
     size_t fileSize = f.size();
     if (fileSize < 44) { f.close(); return false; }
 
-    size_t hdrSize = fileSize < 128 ? fileSize : 128;
-    uint8_t hdr[128];
+    // Read up to 1024 bytes to find the data chunk — some WAVs carry
+    // metadata (LIST, fact) between fmt and data pushing it past 128.
+    size_t hdrSize = fileSize < 1024 ? fileSize : 1024;
+    uint8_t hdr[1024];
     if (f.read(hdr, hdrSize) != hdrSize) { f.close(); return false; }
 
     if (memcmp(hdr, "RIFF", 4) != 0 || memcmp(hdr + 8, "WAVE", 4) != 0) {

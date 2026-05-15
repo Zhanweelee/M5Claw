@@ -324,6 +324,9 @@ static void processRequest(AgentRequest& req, char* system_prompt, char* tool_ou
         } else {
             asstMsg["content"] = "";
         }
+        if (resp.reasoning_content && resp.reasoning_content[0]) {
+            asstMsg["reasoning_content"] = resp.reasoning_content;
+        }
         JsonArray toolCalls = asstMsg["tool_calls"].to<JsonArray>();
 
         for (int i = 0; i < resp.call_count; i++) {
