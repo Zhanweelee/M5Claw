@@ -1,242 +1,338 @@
 # M5Claw
 
-M5Claw 是一个运行在 M5Stack Cardputer 上的 AI 助手固件，围绕 `ESP32-S3 + SPIFFS + PlatformIO + Xiaomi MiMo` 构建，提供本地陪伴界面、键盘聊天、语音输入、语音播报、微信互联、天气显示、定时任务、记忆文件和技能扩展能力。
+AI companion firmware for M5Stack Cardputer. A self-contained device agent built on ESP32-S3 + SPIFFS + PlatformIO that provides local companion UI, keyboard chat, voice input, TTS playback, WeChat integration, weather, cron jobs, persistent memory, and a skill system.
 
-项目面向“可直接刷进设备并长期运行”的形态，而不是单次 Demo。仓库内已经包含固件代码、SPIFFS 数据和一键刷机脚本。
+Designed to be flashed once and run long-term — not a one-shot demo. Ships with firmware code, SPIFFS data, and a one-click flash tool.
 
-## 功能概览
+## Features
 
-- 本地陪伴主页：显示时间、电量、天气，并带有动态日落场景切换。
-- 键盘聊天：本地输入问题，流式显示 AI 回复。
-- 语音输入：在聊天页按住 `Fn` 录音，松开后上传音频给 MiMo 识别并生成回复。
-- TTS 播报：语音输入对应的本地回复会自动调用 MiMo TTS 播放。
-- 微信互联：支持 iLink 协议的微信机器人接入，能收发消息、扫码配对、主动推送。
-- 图片消息处理：微信发来的图片会下载到本地临时文件，并作为多模态输入交给模型。
-- 本地记忆与角色设定：通过 `SOUL.md`、`USER.md`、`MEMORY.md` 持久化人格、用户信息和长期记忆。
-- 技能系统：启动时自动加载 `data/skills/*.md`，作为额外的提示词技能。
-- 定时任务：支持创建周期任务和一次性任务，任务触发后可回推到本地或微信。
-- 心跳检查：定期读取 `HEARTBEAT.md`，发现待处理事项时自动触发 Agent。
-- 天气显示：基于 Open-Meteo 做地理解析和实时天气获取。
-- 串口配置：支持串口 CLI，也兼容 M5Burner 风格的 NVS 配置协议。
+- **Companion screen** — time, battery, weather with dynamic day/night scenes
+- **Keyboard chat** — type queries, stream AI replies token-by-token
+- **Voice input** — hold `Fn` to record, release to send audio for transcription & response
+- **TTS playback** — local AI replies from voice input are spoken aloud
+- **WeChat bridge** — iLink-protocol bot: send/receive messages, QR pairing, proactive push
+- **Image handling** — WeChat images are downloaded and sent as multimodal input to the model
+- **Persistent memory & persona** — `SOUL.md`, `USER.md`, `MEMORY.md` define personality, user profile, and long-term memory
+- **Skill system** — auto-loads `data/skills/*.md` as extra prompt skills at boot
+- **Cron service** — periodic and one-shot jobs, results pushed to local or WeChat
+- **Heartbeat** — periodically reads `HEARTBEAT.md`, triggers agent when pending items found
+- **Weather** — Open-Meteo geocoding and real-time weather
+- **Serial CLI** — on-device config, also compatible with M5Burner NVS protocol
+- **Multi-provider LLM** — Xiaomi MiMo, DeepSeek, OpenAI, or custom OpenAI-compatible API
 
-## 技术栈
+## Hardware
 
-- 硬件：M5Stack Cardputer
-- 主控：ESP32-S3
-- 固件框架：Arduino on PlatformIO
-- 主要库：
-  - `M5Cardputer`
-  - `ArduinoJson`
-  - `WebSockets`
-- 模型服务：Xiaomi MiMo
-- 天气服务：Open-Meteo
-- 文件系统：SPIFFS
+| Component | Detail |
+|-----------|--------|
+| Device | M5Stack Cardputer |
+| MCU | ESP32-S3 |
+| Framework | Arduino on PlatformIO |
+| Storage | SPIFFS |
+| Connectivity | 2.4 GHz Wi-Fi |
 
-## 仓库结构
+## Architecture
 
-```text
+```
+┌─────────────────────────────────────────────────┐
+│                    M5Claw                        │
+│  ┌─────────┐  ┌──────────┐  ┌────────────────┐ │
+│  │ Companion│  │  Chat    │  │  WeChat Status  │ │
+│  │  (idle)  │  │ (key/voz)│  │   (QR/pair)    │ │
+│  └────┬─────┘  └────┬─────┘  └───────┬────────┘ │
+│       │              │               │          │
+│  ┌────┴──────────────┴───────────────┴────────┐ │
+│  │              Agent Loop                    │ │
+│  │  system prompt → tools → LLM → response    │ │
+│  └──────────────┬─────────────────────────────┘ │
+│       │         │         │                     │
+│  ┌────┴──┐ ┌────┴──┐ ┌───┴──────┐              │
+│  │Tools  │ │Memory │ │Session   │              │
+│  │(10+)  │ │Store  │ │Manager   │              │
+│  └───────┘ └───────┘ └──────────┘              │
+│                                                 │
+│  ┌──────────┐  ┌──────────┐  ┌───────────┐     │
+│  │LLM Client│  │TTS Client│  │WeChat Bot │     │
+│  │(multi-   │  │(provider │  │(iLink)    │     │
+│  │provider) │  │ aware)   │  │           │     │
+│  └──────────┘  └──────────┘  └───────────┘     │
+│                                                 │
+│  ┌──────────┐  ┌──────────┐  ┌───────────┐     │
+│  │Cron      │  │Heartbeat │  │Weather    │     │
+│  │Service   │  │          │  │Client     │     │
+│  └──────────┘  └──────────┘  └───────────┘     │
+└─────────────────────────────────────────────────┘
+```
+
+### Key libraries
+
+- `M5Cardputer` — display, keyboard, speaker, battery
+- `ArduinoJson` — JSON serialization for LLM protocol and config
+- `WiFiClientSecure` — TLS 1.2 via ESP-IDF mbedTLS
+
+### LLM provider system
+
+Providers are defined in a static table (`src/llm_client.cpp`). Each entry specifies host, path, default model, TTS capability, and web-search support. Adding a new provider requires only a new row in the table — no other code changes.
+
+Requests use OpenAI-compatible JSON format. Responses are parsed as SSE streams or JSON, depending on `Accept` / `Content-Type`.
+
+### Memory layout (SPIFFS)
+
+```
+/spiffs
+├── config/
+│   ├── SOUL.md           persona & values
+│   ├── USER.md           user profile
+│   └── BOOTSTRAP.json    one-time bootstrap (auto-deleted after import)
+├── memory/
+│   └── MEMORY.md         long-term memory
+├── skills/
+│   └── *.md              skill prompt fragments
+├── sessions/
+│   └── *.jsonl           per-session message history
+├── cron.json             scheduled jobs
+├── HEARTBEAT.md          heartbeat task source
+└── tmp_*                 temporary voice & image files
+```
+
+## Repository structure
+
+```
 .
-├─ src/                   固件源码
-├─ data/
-│  ├─ cert/               TLS 证书包
-│  ├─ config/             人设、用户资料
-│  ├─ memory/             长期记忆
-│  └─ skills/             内置技能
-├─ flash.py               一键刷机脚本
-├─ platformio.ini         PlatformIO 构建配置
-├─ partitions.csv         分区表
+├── src/                  Firmware source
+│   ├── main.cpp          Entry point, UI, setup flow, serial CLI
+│   ├── llm_client.*      Multi-provider LLM & TTS client
+│   ├── agent.*           Tool-calling agent loop
+│   ├── config.*          NVS-backed configuration
+│   ├── tool_registry.*   Built-in tool implementations
+│   ├── wechat_bot.*      iLink WeChat protocol
+│   ├── cron_service.*    Periodic / one-shot job scheduler
+│   ├── weather_client.*  Open-Meteo weather
+│   ├── memory_store.*    Persistent memory files
+│   ├── session_mgr.*     Conversation history
+│   ├── context_builder.* System prompt assembly
+│   ├── skill_loader.*    Skills from SPIFFS
+│   ├── companion.*       Idle screen UI
+│   ├── chat.*            Chat screen UI
+│   ├── message_bus.*     Inter-component message bus
+│   ├── tls_utils.*       TLS configuration
+│   ├── utils.*           Color/display helpers
+│   └── m5claw_config.h   All compile-time constants & provider defs
+├── data/                 SPIFFS data
+│   ├── cert/             TLS certificate bundle
+│   ├── config/           Persona, user profile
+│   ├── memory/           Long-term memory
+│   └── skills/           Built-in skills
+├── flash.py              One-click flash tool with config caching
+├── load_config.py        Build-time config injection (SCons script)
+├── platformio.ini        PlatformIO build configuration
+├── partitions.csv        Partition table
+└── user_config.ini.example  Local config template
 ```
 
-## 环境要求
+## Quick start
 
-- 一台 M5Stack Cardputer
+### Prerequisites
+
+- M5Stack Cardputer
 - Python 3
-- PlatformIO CLI，或安装了 PlatformIO 的 VS Code
-- 可联网的 2.4GHz Wi-Fi
-- 小米 MiMo API Key
-- 可选：微信 iLink 机器人 `token + host`
+- PlatformIO CLI (`pio`) or VS Code + PlatformIO extension
+- 2.4 GHz Wi-Fi network
+- API key for at least one supported LLM provider
 
-## 快速开始
+### Flash
 
-### 1. 安装依赖
-
-确保本机可以使用以下命令：
-
-```powershell
-python --version
-pio --version
-```
-
-如果你在 Windows 上，`python` 不可用时也可以改用 `py -3`。
-
-### 2. 刷写固件
-
-推荐直接使用仓库自带脚本：
-
-```powershell
+```bash
 python flash.py
 ```
 
-脚本会自动完成：
+The script will interactively prompt for:
+- Serial port
+- Wi-Fi credentials (primary + optional backup)
+- LLM provider (MiMo / DeepSeek / OpenAI / Custom)
+- API key and model
+- City (for weather)
 
-1. 扫描串口
-2. 擦除 Flash
-3. 编译固件
-4. 上传固件
-5. 上传 SPIFFS 数据
+Config is cached to `.flash_cache.json` (gitignored) for reuse on the next flash.
 
-如果你想手动执行：
+To skip the interactive prompts and use `user_config.ini` instead:
 
-```powershell
+```bash
+cp user_config.ini.example user_config.ini
+# edit user_config.ini with your values
 pio run
 pio run -t upload --upload-port COMx
 pio run -t uploadfs --upload-port COMx
 ```
 
-查看串口日志：
+### Monitor serial output
 
-```powershell
+```bash
 pio device monitor -b 115200
 ```
 
-如果上传失败，可以尝试让设备进入下载模式后重试：按住 `G0`，按一下 `RST`，再松开 `G0`。
+### If upload fails
 
-## 首次启动流程
+Put the device in download mode: hold **G0**, press **RST**, release **G0**, then retry.
 
-设备启动后会按以下顺序初始化：
+## First boot
 
-1. 挂载 SPIFFS
-2. 读取 NVS 配置
-3. 初始化运行时配置
-4. 初始化记忆、技能、工具、微信、定时器和 Agent
-5. 如果配置完整则自动联网，否则进入 Setup 模式
+The device initializes in this order:
 
-设备首次启动时会进入板载 Setup：
+1. Mount SPIFFS
+2. Load NVS config
+3. Import bootstrap config (if present)
+4. Apply build-time defaults
+5. Init memory, skills, tools, WeChat, cron, heartbeat, agent
+6. If config is complete → connect Wi-Fi automatically
+7. Otherwise → enter on-device Setup
 
-- 依次输入 Wi-Fi、MiMo Key、模型名、城市
-- `Enter` 确认当前字段
-- `Del` 删除字符
-- `Tab` 跳过并进入离线模式
+### Setup flow
 
-## 设备操作
+Navigate with the keyboard:
 
-### Companion 页面
+| Step | Field | Notes |
+|------|-------|-------|
+| 1 | Wi-Fi SSID | |
+| 2 | Wi-Fi Password | Masked input |
+| 3 | Provider | type `mimo`, `deepseek`, `openai`, or `custom` |
+| 4 | API Key | Skipped if baked-in key exists |
+| 5 | Model | Pre-filled from provider default |
+| 6 | City | Default: Beijing |
 
-- `Tab`：进入聊天页
-- `Ctrl`：进入微信状态页
-- 单独按一下 `Fn`：切换日落场景
-- `Fn + R`：清除当前 Wi-Fi 并重新进入配置
+- **Enter** — confirm
+- **Del** — backspace
+- **Tab** — skip to offline mode
 
-### Chat 页面
+## Controls
 
-- 普通键盘输入：编辑消息
-- `Enter`：发送消息
-- `Del`：删除字符
-- `Tab`：向上滚动聊天记录
-- `Ctrl`：向下滚动；如果已经在底部，则返回 Companion 页面
-- `Alt`：返回 Companion 页面
-- 按住 `Fn`：开始录音
-- 松开 `Fn`：结束录音并发送语音
-- `Fn + C`：取消当前模型生成
+### Companion screen
 
-### WeChat 状态页
+| Key | Action |
+|-----|--------|
+| `Tab` | Enter chat |
+| `Ctrl` | WeChat status |
+| `Fn` (tap) | Toggle day/night scene |
+| `Fn + R` | Reset Wi-Fi, re-enter setup |
 
-- 从 Companion 页面按 `Ctrl` 进入
-- `Tab`：返回 Companion 页面
-- `Enter`：配对失败时重新尝试
-- 未配置时会尝试拉起二维码配对
+### Chat screen
 
-### 联网失败页
+| Key | Action |
+|-----|--------|
+| Keyboard | Type message |
+| `Enter` | Send |
+| `Del` | Delete character |
+| `Tab` | Scroll up history |
+| `Ctrl` | Scroll down; return to Companion if at bottom |
+| `Alt` | Return to Companion |
+| `Fn` (hold) | Record voice |
+| `Fn` (release) | Send voice |
+| `Fn + C` | Cancel current generation |
 
-- `Enter`：重试联网
-- `Fn + R`：重设 Wi-Fi
-- `Tab`：进入离线模式
+### WeChat status screen
 
-## 微信功能说明
+| Key | Action |
+|-----|--------|
+| `Ctrl` | Enter from Companion |
+| `Tab` | Return to Companion |
+| `Enter` | Retry pairing |
 
-项目内置了一个基于 iLink 协议的微信桥接层：
+### Offline / Wi-Fi failed screen
 
-- 支持通过二维码配对获取 `bot_token`
-- 也支持通过串口直接设置 `token` 和 `host`
-- 微信来的文字消息会进入 Agent
-- 微信来的图片会下载到 SPIFFS 临时文件后作为多模态输入
-- 模型回复会自动回发给对应用户
-- 模型也可以通过 `wechat_send` 工具主动给指定用户发消息
+| Key | Action |
+|-----|--------|
+| `Enter` | Retry connection |
+| `Fn + R` | Reset Wi-Fi credentials |
+| `Tab` | Enter offline mode |
 
-微信轮询与语音录制/模型调用之间做了暂停和恢复处理，避免在内存紧张时互相抢占。
+## WeChat integration
 
-## 内置工具
+Built-in iLink protocol bridge:
 
-Agent 在运行时可以调用这些设备侧工具：
+- QR code pairing to obtain `bot_token`
+- Alternatively, set `token` and `host` via serial CLI
+- Incoming text messages are routed to the agent
+- Incoming images are downloaded to SPIFFS and sent as multimodal input
+- Model replies are automatically sent back to the user
+- The model can proactively message users via the `wechat_send` tool
+
+WeChat polling pauses during voice recording and model calls to avoid memory contention.
+
+## Built-in tools
+
+The agent can invoke these device-side tools:
 
 - `get_current_time`
 - `read_file`
 - `write_file`
 - `edit_file`
 - `list_dir`
-- `cron_add`
-- `cron_list`
-- `cron_remove`
+- `cron_add` / `cron_list` / `cron_remove`
 - `wechat_send`
 
-此外，MiMo 侧还启用了内置 `web_search`。
+Web search is enabled for providers that support it (MiMo).
 
-## 持久化文件
+## Serial CLI
 
-以下文件位于设备的 SPIFFS 中：
+Available in the serial monitor (`pio device monitor -b 115200`):
 
-- `data/config/SOUL.md`：助手人格与价值观
-- `data/config/USER.md`：用户资料
-- `data/memory/MEMORY.md`：长期记忆
-- `data/skills/*.md`：技能文件
+```
+help                          Show available commands
+set_wifi <ssid> <pass>        Set primary Wi-Fi
+set_wifi2 <ssid> <pass>       Set backup Wi-Fi
+set_provider <id>             Set LLM provider (mimo/deepseek/openai/custom)
+set_llm_key <key>             Set API key
+set_llm_model <model>         Set model name
+set_city <city>               Set city for weather
+set_wechat <token> <host>     Set WeChat credentials
+show_config                   Display current config
+list_providers                List supported providers
+reset_config                  Clear all config
+reboot                        Restart device
+```
 
-运行过程中还会生成：
+The device also responds to M5Burner-compatible `CMD::GET` / `CMD::SET` / `CMD::LIST` / `CMD::INIT` protocol for GUI-based config tools.
 
-- `/sessions/*.jsonl`：按会话保存的历史消息
-- `/cron.json`：定时任务
-- `/HEARTBEAT.md`：心跳任务来源文件
-- `/tmp_voice.wav`：临时语音文件
-- `/tmp_wx_*.bin`：微信图片临时文件
+## Adding a provider
 
-如果你修改了 `data/` 下的文件，需要重新执行：
+Add a row to the `kProviders` table in `src/llm_client.cpp`:
 
-```powershell
+```cpp
+{
+    "myprovider", "My Provider",
+    "api.myprovider.com", "/v1/chat/completions", "my-model-v1",
+    false, nullptr, nullptr, nullptr, 0,   // no TTS
+    false, 0, 0                             // no web search
+},
+```
+
+Then add the corresponding defines in `src/m5claw_config.h` and wire up a build-time key macro in `load_config.py` if you want `flash.py` support.
+
+## Configuration
+
+| File | Purpose |
+|------|---------|
+| `SOUL.md` | Assistant personality, tone, boundaries |
+| `USER.md` | User name, language, timezone, location |
+| `MEMORY.md` | Long-term facts, preferences, plans |
+| `skills/*.md` | Task-specific instructions (daily brief, weather, reminders, etc.) |
+
+**Note:** After editing any file under `data/`, re-upload SPIFFS:
+
+```bash
 pio run -t uploadfs --upload-port COMx
 ```
 
-## 串口命令
+### Build-time secrets
 
-串口监视器下可用：
+Copy `user_config.ini.example` → `user_config.ini` (gitignored). Values are compiled into firmware but **not persisted** to device NVS. API keys baked at build time are marked transient: they work immediately but won't survive a factory reset.
 
-```text
-help
-set_wifi <ssid> <pass>
-set_mimo_key <key>
-set_mimo_model <model>
-set_city <city>
-set_wechat <token> <host>
-show_config
-reset_config
-reboot
-```
+## Design notes
 
-项目还实现了 M5Burner 兼容的 `CMD::GET / CMD::SET / CMD::LIST / CMD::INIT` 配置协议，方便图形化工具直接写入参数。
+- **Local replies are kept short** — the system prompt instructs the model to be concise on the local display channel. WeChat replies can be longer.
+- **Offline mode** — the Companion screen and keyboard work without Wi-Fi, but AI, weather, WeChat, and TTS require connectivity.
+- **Memory is constrained** — the agent uses SPIFFS-backed swap for conversation history and PSRAM where available. Media data URIs are capped at 3 MB in-request.
+- **Wi-Fi fallback** — if primary Wi-Fi fails, the device tries the backup network (`ssid2`/`pass2`) before showing the failure screen.
 
-## 配置建议
+## License
 
-- `SOUL.md` 用来定义设备人格，适合写风格、边界和行为原则。
-- `USER.md` 用来写用户昵称、语言偏好、时区、所在地等信息。
-- `MEMORY.md` 用来保存长期事实，例如习惯、偏好、计划。
-- `skills/*.md` 适合存放特定任务的操作指南，比如日报、天气、翻译、提醒等。
-
-## 注意事项
-
-- 本地屏幕通道在系统提示中被限制为“尽量简短”，所以本地回复通常会比微信回复短。
-- 设备离线时仍可进入 Companion 页面，但 AI、天气、微信等联网功能不可用。
-- 修改 `data/skills`、`data/config`、`data/memory` 后，仅重新上传固件不够，还需要重新上传 SPIFFS。
-- 证书文件 `data/cert/x509_crt_bundle.bin` 是 HTTPS 访问所需资源，不要删除。
-- 分区表中给 SPIFFS 分配了较大的空间，便于保存技能、记忆、会话和临时媒体文件。
-
-## 许可证
-
-本项目使用 `GPL-3.0` 许可证，详见 [LICENSE](LICENSE)。
+GPL-3.0 — see [LICENSE](LICENSE).

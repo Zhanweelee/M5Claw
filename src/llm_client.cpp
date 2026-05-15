@@ -13,11 +13,40 @@ static char s_api_key[320] = {0};
 static char s_model[64] = M5CLAW_LLM_DEFAULT_MODEL;
 static char s_custom_host[128] = {0};
 static char s_custom_path[128] = {0};
+static const LlmProviderInfo* s_provider = nullptr;
 
 static volatile bool* s_abort_flag = nullptr;
 static bool is_aborted() { return s_abort_flag && *s_abort_flag; }
 
 static LlmPreReadFreeFn s_pre_read_free_fn = nullptr;
+
+static const LlmProviderInfo kProviders[] = {
+    {
+        M5CLAW_PROVIDER_MIMO, "Xiaomi MiMo",
+        M5CLAW_MIMO_HOST, M5CLAW_MIMO_CHAT_PATH, M5CLAW_MIMO_MODEL,
+        true, M5CLAW_MIMO_TTS_PATH, M5CLAW_MIMO_TTS_MODEL, M5CLAW_MIMO_TTS_VOICE, M5CLAW_MIMO_TTS_SAMPLE_RATE,
+        true, M5CLAW_MIMO_SEARCH_MAX_KEYWORD, M5CLAW_MIMO_SEARCH_LIMIT
+    },
+    {
+        M5CLAW_PROVIDER_DEEPSEEK, "DeepSeek",
+        M5CLAW_DEEPSEEK_HOST, M5CLAW_DEEPSEEK_CHAT_PATH, M5CLAW_DEEPSEEK_MODEL,
+        false, nullptr, nullptr, nullptr, 0,
+        false, 0, 0
+    },
+    {
+        M5CLAW_PROVIDER_OPENAI, "OpenAI",
+        M5CLAW_OPENAI_HOST, M5CLAW_OPENAI_CHAT_PATH, M5CLAW_OPENAI_MODEL,
+        false, nullptr, nullptr, nullptr, 0,
+        false, 0, 0
+    },
+    {
+        M5CLAW_PROVIDER_CUSTOM, "Custom",
+        "", "/v1/chat/completions", "",
+        false, nullptr, nullptr, nullptr, 0,
+        false, 0, 0
+    },
+};
+static constexpr int kProviderCount = sizeof(kProviders) / sizeof(kProviders[0]);
 
 static const char* kMediaPlaceholderPrefix = "__M5CLAW_MEDIA|";
 static const char* kMediaPlaceholderSuffix = "__";
@@ -41,13 +70,37 @@ struct HttpResponseMeta {
 void llm_client_set_abort_flag(volatile bool* flag) { s_abort_flag = flag; }
 void llm_client_set_pre_read_free(LlmPreReadFreeFn fn) { s_pre_read_free_fn = fn; }
 
+int llm_provider_count() { return kProviderCount; }
+
+const LlmProviderInfo* llm_provider_by_index(int idx) {
+    if (idx < 0 || idx >= kProviderCount) return nullptr;
+    return &kProviders[idx];
+}
+
+const LlmProviderInfo* llm_provider_by_id(const char* id) {
+    if (!id || !id[0]) return &kProviders[0];
+    for (int i = 0; i < kProviderCount; i++) {
+        if (strcasecmp(kProviders[i].id, id) == 0) return &kProviders[i];
+    }
+    return nullptr;
+}
+
+const char* llm_current_provider() { return s_provider ? s_provider->id : M5CLAW_DEFAULT_PROVIDER; }
+const char* llm_current_model()    { return s_model; }
+
 static const char* llm_host() {
-    return s_custom_host[0] ? s_custom_host : M5CLAW_MIMO_HOST;
+    if (s_custom_host[0]) return s_custom_host;
+    if (s_provider && s_provider->host[0]) return s_provider->host;
+    return M5CLAW_MIMO_HOST;
 }
 
 static const char* llm_path() {
-    return s_custom_path[0] ? s_custom_path : M5CLAW_MIMO_CHAT_PATH;
+    if (s_custom_path[0]) return s_custom_path;
+    if (s_provider && s_provider->chat_path[0]) return s_provider->chat_path;
+    return M5CLAW_MIMO_CHAT_PATH;
 }
+
+const char* llm_current_host() { return llm_host(); }
 
 static void* alloc_prefer_psram(size_t size) {
     void* p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -65,12 +118,26 @@ static void safe_copy(char* dst, size_t sz, const char* src) {
 
 void llm_client_init(const char* api_key, const char* model, const char* provider,
                      const char* custom_host, const char* custom_path) {
-    (void)provider;
+    s_provider = llm_provider_by_id(provider);
+    if (!s_provider) {
+        s_provider = &kProviders[0]; // fallback to MiMo
+        Serial.printf("[LLM] Unknown provider '%s', falling back to %s\n",
+                      provider ? provider : "(null)", s_provider->name);
+    }
+
     if (api_key && api_key[0]) safe_copy(s_api_key, sizeof(s_api_key), api_key);
-    if (model && model[0]) safe_copy(s_model, sizeof(s_model), model);
-    if (custom_host && custom_host[0]) safe_copy(s_custom_host, sizeof(s_custom_host), custom_host);
-    if (custom_path && custom_path[0]) safe_copy(s_custom_path, sizeof(s_custom_path), custom_path);
-    Serial.printf("[LLM] Init MiMo model=%s host=%s path=%s\n", s_model, llm_host(), llm_path());
+
+    if (model && model[0]) {
+        safe_copy(s_model, sizeof(s_model), model);
+    } else if (s_provider->default_model[0]) {
+        safe_copy(s_model, sizeof(s_model), s_provider->default_model);
+    }
+
+    safe_copy(s_custom_host, sizeof(s_custom_host), custom_host ? custom_host : "");
+    safe_copy(s_custom_path, sizeof(s_custom_path), custom_path ? custom_path : "");
+
+    Serial.printf("[LLM] Init provider=%s model=%s host=%s path=%s tts=%d\n",
+                  s_provider->name, s_model, llm_host(), llm_path(), s_provider->has_tts);
 }
 
 void llm_response_free(LlmResponse* resp) {
@@ -487,11 +554,13 @@ static void build_openai_body(JsonDocument& doc, const char* system_prompt,
     for (JsonVariant v : src) msgs.add(v);
 
     JsonArray dstTools = doc["tools"].to<JsonArray>();
-    JsonObject webSearch = dstTools.add<JsonObject>();
-    webSearch["type"] = "web_search";
-    webSearch["max_keyword"] = M5CLAW_MIMO_SEARCH_MAX_KEYWORD;
-    webSearch["force_search"] = false;
-    webSearch["limit"] = M5CLAW_MIMO_SEARCH_LIMIT;
+    if (s_provider && s_provider->has_web_search) {
+        JsonObject webSearch = dstTools.add<JsonObject>();
+        webSearch["type"] = "web_search";
+        webSearch["max_keyword"] = s_provider->search_max_keyword;
+        webSearch["force_search"] = false;
+        webSearch["limit"] = s_provider->search_limit;
+    }
 
     if (tools_json && tools_json[0]) {
         JsonDocument toolsDoc;
@@ -791,12 +860,13 @@ static bool tts_post_json(const char* path, const String& bodyStr,
 
 static bool play_pcm_audio(const uint8_t* decoded, size_t decodedLen) {
     if (!decoded || decodedLen < 2) return false;
+    int sampleRate = s_provider ? s_provider->tts_sample_rate : M5CLAW_MIMO_TTS_SAMPLE_RATE;
 
     M5Cardputer.Speaker.stop();
     bool played = M5Cardputer.Speaker.playRaw((const int16_t*)decoded, decodedLen / 2,
-                                              M5CLAW_MIMO_TTS_SAMPLE_RATE, false, 1, -1, true);
+                                              sampleRate, false, 1, -1, true);
     if (played) {
-        unsigned long waitUntil = millis() + (decodedLen * 1000UL / 2 / M5CLAW_MIMO_TTS_SAMPLE_RATE) + 1500;
+        unsigned long waitUntil = millis() + (decodedLen * 1000UL / 2 / sampleRate) + 1500;
         while (M5Cardputer.Speaker.isPlaying() && millis() < waitUntil) {
             delay(10);
         }
@@ -874,6 +944,10 @@ static bool extract_audio_b64(const char* body, size_t bodyLen, String& audioB64
 
 bool llm_speak_text(const char* text) {
     if (!text || !text[0] || s_api_key[0] == '\0' || WiFi.status() != WL_CONNECTED) return false;
+    if (!s_provider || !s_provider->has_tts) {
+        Serial.printf("[TTS] Provider '%s' does not support TTS\n", s_provider ? s_provider->name : "none");
+        return false;
+    }
 
     String clipped = text;
     if (clipped.length() > M5CLAW_TTS_TEXT_MAX) {
@@ -915,7 +989,7 @@ bool llm_speak_text(const char* text) {
 
     auto tryChatTts = [&](bool addModalities) -> bool {
         JsonDocument doc;
-        doc["model"] = M5CLAW_MIMO_TTS_MODEL;
+        doc["model"] = s_provider->tts_model;
         JsonArray msgs = doc["messages"].to<JsonArray>();
         JsonObject msg = msgs.add<JsonObject>();
         msg["role"] = "assistant";
@@ -926,7 +1000,7 @@ bool llm_speak_text(const char* text) {
         }
         JsonObject audio = doc["audio"].to<JsonObject>();
         audio["format"] = "pcm16";
-        audio["voice"] = M5CLAW_MIMO_TTS_VOICE;
+        audio["voice"] = s_provider->tts_voice;
         doc["stream"] = false;
 
         String bodyStr;
@@ -942,9 +1016,9 @@ bool llm_speak_text(const char* text) {
 
     auto tryAudioSpeech = [&]() -> bool {
         JsonDocument doc;
-        doc["model"] = M5CLAW_MIMO_TTS_MODEL;
+        doc["model"] = s_provider->tts_model;
         doc["input"] = clipped;
-        doc["voice"] = M5CLAW_MIMO_TTS_VOICE;
+        doc["voice"] = s_provider->tts_voice;
         doc["format"] = "pcm16";
         doc["response_format"] = "pcm16";
 
@@ -955,7 +1029,7 @@ bool llm_speak_text(const char* text) {
         HttpResponseMeta meta = {};
         char* body = nullptr;
         size_t bodyLen = 0;
-        if (!tts_post_json(M5CLAW_MIMO_TTS_PATH, bodyStr, &meta, &body, &bodyLen)) return false;
+        if (!tts_post_json(s_provider->tts_path, bodyStr, &meta, &body, &bodyLen)) return false;
         return tryPlayBody(meta, body, bodyLen);
     };
 

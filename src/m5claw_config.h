@@ -8,17 +8,37 @@
 #define M5CLAW_AGENT_MAX_TOOL_ITER     10
 #define M5CLAW_MAX_TOOL_CALLS          4
 
-// Xiaomi MiMo
-#define M5CLAW_LLM_DEFAULT_MODEL       "mimo-v2-omni"
-#define M5CLAW_LLM_MAX_TOKENS          4096
+// Provider IDs
+#define M5CLAW_PROVIDER_MIMO           "mimo"
+#define M5CLAW_PROVIDER_DEEPSEEK       "deepseek"
+#define M5CLAW_PROVIDER_OPENAI         "openai"
+#define M5CLAW_PROVIDER_CUSTOM         "custom"
+#define M5CLAW_DEFAULT_PROVIDER        M5CLAW_PROVIDER_MIMO
+
+// Provider defaults - MiMo
 #define M5CLAW_MIMO_HOST               "api.xiaomimimo.com"
 #define M5CLAW_MIMO_CHAT_PATH          "/v1/chat/completions"
+#define M5CLAW_MIMO_MODEL              "mimo-v2-omni"
 #define M5CLAW_MIMO_TTS_PATH           "/v1/audio/speech"
 #define M5CLAW_MIMO_TTS_MODEL          "mimo-v2-tts"
 #define M5CLAW_MIMO_TTS_VOICE          "mimo_default"
 #define M5CLAW_MIMO_TTS_SAMPLE_RATE    24000
 #define M5CLAW_MIMO_SEARCH_MAX_KEYWORD 3
 #define M5CLAW_MIMO_SEARCH_LIMIT       5
+
+// Provider defaults - DeepSeek
+#define M5CLAW_DEEPSEEK_HOST           "api.deepseek.com"
+#define M5CLAW_DEEPSEEK_CHAT_PATH      "/chat/completions"
+#define M5CLAW_DEEPSEEK_MODEL          "deepseek-v4-flash"
+
+// Provider defaults - OpenAI
+#define M5CLAW_OPENAI_HOST             "api.openai.com"
+#define M5CLAW_OPENAI_CHAT_PATH        "/v1/chat/completions"
+#define M5CLAW_OPENAI_MODEL            "gpt-4o"
+
+// Backward-compat macro
+#define M5CLAW_LLM_DEFAULT_MODEL       M5CLAW_MIMO_MODEL
+#define M5CLAW_LLM_MAX_TOKENS          4096
 #define M5CLAW_SSE_LINE_BUF            2048
 #define M5CLAW_LLM_TEXT_MAX            (8 * 1024)
 #define M5CLAW_TTS_TEXT_MAX            240

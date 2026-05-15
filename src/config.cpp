@@ -89,7 +89,7 @@ static void writeSecret(const char* key, const String& value) {
 }
 
 static String ssid, password, ssid2, password2, city;
-static String llmApiKey, llmModel;
+static String llmProvider, llmApiKey, llmModel;
 static String wechatToken, wechatApiHost;
 static bool llmApiKeyTransient = false;
 
@@ -115,6 +115,7 @@ bool Config::load() {
     ssid2           = prefs.getString("ssid2", "");
     password2       = readSecret("pass2");
     city            = prefs.getString("city", "Beijing");
+    llmProvider     = prefs.getString("llm_provider", "");
     llmApiKey       = readSecret("llm_key");
     llmModel        = prefs.getString("llm_model", "");
     wechatToken     = readSecret("wc_token");
@@ -133,6 +134,7 @@ void Config::save() {
     prefs.putString("city",      city);
     if (llmApiKeyTransient) prefs.remove("llm_key");
     else writeSecret("llm_key",  llmApiKey);
+    prefs.putString("llm_provider", llmProvider);
     prefs.putString("llm_model", llmModel);
     writeSecret("wc_token",      wechatToken);
     prefs.putString("wc_host",   wechatApiHost);
@@ -144,7 +146,7 @@ void Config::reset() {
     prefs.clear();
     prefs.end();
     ssid = password = ssid2 = password2 = city = "";
-    llmApiKey = llmModel = "";
+    llmProvider = llmApiKey = llmModel = "";
     wechatToken = wechatApiHost = "";
     llmApiKeyTransient = false;
 }
@@ -164,6 +166,7 @@ bool Config::importBootstrapFile() {
     int changed = 0;
     changed += applyBootstrapValue(doc["wifi_ssid"], ssid) ? 1 : 0;
     changed += applyBootstrapValue(doc["wifi_pass"], password) ? 1 : 0;
+    changed += applyBootstrapValue(doc["provider"], llmProvider) ? 1 : 0;
     changed += applyBootstrapSecretValue(doc["mimo_api_key"], llmApiKey, &llmApiKeyTransient) ? 1 : 0;
     changed += applyBootstrapSecretValue(doc["llm_api_key"], llmApiKey, &llmApiKeyTransient) ? 1 : 0;
     changed += applyBootstrapValue(doc["mimo_model"], llmModel) ? 1 : 0;
@@ -184,6 +187,10 @@ bool Config::importBootstrapFile() {
 
 bool Config::applyDefaults() {
     bool changed = false;
+    if (llmProvider.length() == 0) {
+        llmProvider = M5CLAW_DEFAULT_PROVIDER;
+        changed = true;
+    }
     if (llmModel.length() == 0) {
         llmModel = M5CLAW_LLM_DEFAULT_MODEL;
         changed = true;
@@ -200,6 +207,7 @@ const String& Config::getPassword()        { return password; }
 const String& Config::getSSID2()           { return ssid2; }
 const String& Config::getPassword2()       { return password2; }
 const String& Config::getCity()            { return city; }
+const String& Config::getLlmProvider()     { return llmProvider; }
 const String& Config::getLlmApiKey()       { return llmApiKey; }
 const String& Config::getLlmModel()        { return llmModel; }
 const String& Config::getWechatToken()     { return wechatToken; }
@@ -210,6 +218,7 @@ void Config::setPassword(const String& p)        { password = p; }
 void Config::setSSID2(const String& s)           { ssid2 = s; }
 void Config::setPassword2(const String& p)       { password2 = p; }
 void Config::setCity(const String& c)            { city = c; }
+void Config::setLlmProvider(const String& p)     { llmProvider = p; }
 void Config::setLlmApiKey(const String& k)       { llmApiKey = k; llmApiKeyTransient = false; }
 void Config::setLlmModel(const String& m)        { llmModel = m; }
 void Config::setWechatToken(const String& t)     { wechatToken = t; }

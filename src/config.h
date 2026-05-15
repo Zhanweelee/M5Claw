@@ -15,6 +15,7 @@ namespace Config {
     const String& getCity();
 
     // LLM config
+    const String& getLlmProvider();
     const String& getLlmApiKey();
     const String& getLlmModel();
 
@@ -27,6 +28,7 @@ namespace Config {
     void setSSID2(const String& ssid);
     void setPassword2(const String& password);
     void setCity(const String& city);
+    void setLlmProvider(const String& provider);
     void setLlmApiKey(const String& key);
     void setLlmModel(const String& model);
     void setWechatToken(const String& token);

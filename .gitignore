@@ -12,6 +12,7 @@ mimi_secrets.h
 .env*
 user_config.ini
 data/config/BOOTSTRAP.json
+.flash_cache.json
 
 # Python 缓存
 __pycache__/

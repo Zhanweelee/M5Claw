@@ -4,10 +4,23 @@
 ; but are not persisted back into device NVS by the firmware.
 
 [user]
+; WiFi (primary)
 wifi_ssid =
 wifi_pass =
 
-mimo_model = mimo-v2-omni
+; WiFi (backup, optional — device will try this if primary fails)
+wifi_ssid2 =
+wifi_pass2 =
+
+; Default provider: mimo / deepseek / openai / custom
+provider = mimo
+provider_model = mimo-v2-omni
+provider_api_key =
+
+; Per-provider baked-in API keys (used when switching providers on-device)
 mimo_api_key =
+mimo_model = mimo-v2-omni
+deepseek_api_key =
+openai_api_key =
 
 city = Beijing

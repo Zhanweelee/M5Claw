@@ -30,8 +30,30 @@
 #ifndef USER_WIFI_PASS
 #define USER_WIFI_PASS ""
 #endif
+#ifndef USER_WIFI_SSID2
+#define USER_WIFI_SSID2 ""
+#endif
+#ifndef USER_WIFI_PASS2
+#define USER_WIFI_PASS2 ""
+#endif
+#ifndef USER_PROVIDER
+#define USER_PROVIDER ""
+#endif
+#ifndef USER_PROVIDER_MODEL
+#define USER_PROVIDER_MODEL ""
+#endif
+#ifndef USER_PROVIDER_API_KEY
+#define USER_PROVIDER_API_KEY ""
+#endif
+// Legacy build-time keys for individual providers
 #ifndef USER_MIMO_KEY
 #define USER_MIMO_KEY ""
+#endif
+#ifndef USER_DEEPSEEK_KEY
+#define USER_DEEPSEEK_KEY ""
+#endif
+#ifndef USER_OPENAI_KEY
+#define USER_OPENAI_KEY ""
 #endif
 #ifndef USER_MIMO_MODEL
 #define USER_MIMO_MODEL ""
@@ -50,7 +72,7 @@ static AppMode appMode = AppMode::SETUP;
 static bool offlineMode = false;
 
 enum class SetupStep {
-    SSID, PASSWORD, LLM_KEY, LLM_MODEL, CITY, CONNECTING
+    SSID, PASSWORD, PROVIDER, LLM_KEY, LLM_MODEL, CITY, CONNECTING
 };
 static SetupStep setupStep = SetupStep::SSID;
 static String setupInput;
@@ -109,6 +131,14 @@ static bool hasPreconfiguredOnlineSettings() {
         && Config::getLlmModel().length() > 0;
 }
 
+static const char* getBuiltInKeyForProvider(const char* provider) {
+    if (!provider || !provider[0]) return USER_PROVIDER_API_KEY[0] ? USER_PROVIDER_API_KEY : nullptr;
+    if (strcmp(provider, M5CLAW_PROVIDER_MIMO) == 0 && USER_MIMO_KEY[0]) return USER_MIMO_KEY;
+    if (strcmp(provider, M5CLAW_PROVIDER_DEEPSEEK) == 0 && USER_DEEPSEEK_KEY[0]) return USER_DEEPSEEK_KEY;
+    if (strcmp(provider, M5CLAW_PROVIDER_OPENAI) == 0 && USER_OPENAI_KEY[0]) return USER_OPENAI_KEY;
+    return USER_PROVIDER_API_KEY[0] ? USER_PROVIDER_API_KEY : nullptr;
+}
+
 bool fillBuildTimeDefaults() {
     bool changed = false;
 
@@ -120,17 +150,50 @@ bool fillBuildTimeDefaults() {
         Config::setPassword(String(USER_WIFI_PASS));
         changed = true;
     }
-    if (Config::getLlmModel().length() == 0 && USER_MIMO_MODEL[0]) {
-        Config::setLlmModel(String(USER_MIMO_MODEL));
+    if (Config::getSSID2().length() == 0 && USER_WIFI_SSID2[0]) {
+        Config::setSSID2(String(USER_WIFI_SSID2));
         changed = true;
     }
+    if (Config::getPassword2().length() == 0 && USER_WIFI_PASS2[0]) {
+        Config::setPassword2(String(USER_WIFI_PASS2));
+        changed = true;
+    }
+
+    // Provider default
+    if (Config::getLlmProvider().length() == 0 && USER_PROVIDER[0]) {
+        Config::setLlmProvider(String(USER_PROVIDER));
+        changed = true;
+    }
+
+    // Model default - use USER_PROVIDER_MODEL first, then legacy USER_MIMO_MODEL
+    if (Config::getLlmModel().length() == 0) {
+        if (USER_PROVIDER_MODEL[0]) {
+            Config::setLlmModel(String(USER_PROVIDER_MODEL));
+        } else if (USER_MIMO_MODEL[0]) {
+            Config::setLlmModel(String(USER_MIMO_MODEL));
+        } else {
+            // Look up provider default model
+            const LlmProviderInfo* info = llm_provider_by_id(Config::getLlmProvider().c_str());
+            if (info && info->default_model[0]) {
+                Config::setLlmModel(String(info->default_model));
+            }
+        }
+        if (Config::getLlmModel().length() > 0) changed = true;
+    }
+
     if (Config::getCity().length() == 0 && USER_CITY[0]) {
         Config::setCity(String(USER_CITY));
         changed = true;
     }
 
-    if (Config::getLlmApiKey().length() == 0 && USER_MIMO_KEY[0]) {
-        Config::setTransientLlmApiKey(String(USER_MIMO_KEY));
+    // Built-in API key for the current provider
+    if (Config::getLlmApiKey().length() == 0) {
+        const char* providerId = Config::getLlmProvider().c_str();
+        const char* builtInKey = getBuiltInKeyForProvider(providerId);
+        if (builtInKey) {
+            Config::setTransientLlmApiKey(String(builtInKey));
+            Serial.printf("[CONFIG] Using built-in key for provider '%s'\n", providerId);
+        }
     }
     return changed;
 }
@@ -143,7 +206,7 @@ static bool isSensitiveNvsKey(const char* key) {
 
 // ── M5Burner NVS Configure protocol ──────────────────────────
 static const char* const NVS_KEYS[] = {
-    "ssid", "pass", "llm_key", "llm_model",
+    "ssid", "pass", "llm_provider", "llm_key", "llm_model",
     "city", "wc_token", "wc_host"
 };
 
@@ -151,6 +214,7 @@ static String nvsGet(const char* key) {
     if (isSensitiveNvsKey(key)) return "";
     if (strcmp(key, "ssid") == 0)      return Config::getSSID();
     if (strcmp(key, "pass") == 0)      return Config::getPassword();
+    if (strcmp(key, "llm_provider") == 0) return Config::getLlmProvider();
     if (strcmp(key, "llm_key") == 0)   return Config::getLlmApiKey();
     if (strcmp(key, "llm_model") == 0) return Config::getLlmModel();
     if (strcmp(key, "city") == 0)      return Config::getCity();
@@ -162,6 +226,7 @@ static String nvsGet(const char* key) {
 static void nvsSet(const char* key, const char* value) {
     if (strcmp(key, "ssid") == 0)      Config::setSSID(value);
     else if (strcmp(key, "pass") == 0)      Config::setPassword(value);
+    else if (strcmp(key, "llm_provider") == 0) Config::setLlmProvider(value);
     else if (strcmp(key, "llm_key") == 0)   Config::setLlmApiKey(value);
     else if (strcmp(key, "llm_model") == 0) Config::setLlmModel(value);
     else if (strcmp(key, "city") == 0)      Config::setCity(value);
@@ -212,12 +277,15 @@ void processSerialCommands() {
 
     if (cmd == "help") {
         Serial.println("=== M5Claw Serial Config ===");
-        Serial.println("  set_wifi <ssid> <pass>    - Set WiFi");
-        Serial.println("  set_mimo_key <key>        - Set Xiaomi MiMo API key");
-        Serial.println("  set_mimo_model <model>    - Default: mimo-v2-omni");
+        Serial.println("  set_wifi <ssid> <pass>    - Set primary WiFi");
+        Serial.println("  set_wifi2 <ssid> <pass>   - Set backup WiFi");
+        Serial.println("  set_provider <id>         - Set LLM provider (mimo/deepseek/openai/custom)");
+        Serial.println("  set_llm_key <key>         - Set API key for current provider");
+        Serial.println("  set_llm_model <model>     - Set model name");
         Serial.println("  set_city <city>           - e.g. Beijing");
         Serial.println("  set_wechat <token> <host> - Set WeChat bot credentials");
         Serial.println("  show_config               - Show current config");
+        Serial.println("  list_providers            - List supported providers");
         Serial.println("  reset_config              - Clear all config");
         Serial.println("  reboot                    - Restart device");
     } else if (cmd == "set_wifi") {
@@ -226,13 +294,56 @@ void processSerialCommands() {
             Config::setSSID(val.substring(0, sp));
             Config::setPassword(val.substring(sp + 1));
             Config::save();
-            Serial.printf("WiFi set: %s\n", Config::getSSID().c_str());
+            Serial.printf("WiFi 1 set: %s\n", Config::getSSID().c_str());
         } else {
             Serial.println("Usage: set_wifi <ssid> <password>");
         }
+    } else if (cmd == "set_wifi2") {
+        int sp = val.indexOf(' ');
+        if (sp > 0) {
+            Config::setSSID2(val.substring(0, sp));
+            Config::setPassword2(val.substring(sp + 1));
+            Config::save();
+            Serial.printf("WiFi 2 set: %s\n", Config::getSSID2().c_str());
+        } else {
+            Serial.println("Usage: set_wifi2 <ssid> <password>");
+        }
+    } else if (cmd == "set_provider") {
+        const LlmProviderInfo* info = llm_provider_by_id(val.c_str());
+        if (info) {
+            Config::setLlmProvider(val);
+            // Auto-fill model from provider default
+            if (info->default_model[0]) {
+                Config::setLlmModel(String(info->default_model));
+            }
+            // Auto-fill key from built-in if available
+            const char* builtInKey = getBuiltInKeyForProvider(val.c_str());
+            if (builtInKey) {
+                Config::setTransientLlmApiKey(String(builtInKey));
+                Serial.printf("Provider: %s (model=%s, built-in key loaded)\n", info->name, info->default_model);
+            } else {
+                Serial.printf("Provider: %s (model=%s, enter key manually)\n", info->name, info->default_model);
+            }
+            Config::save();
+        } else {
+            Serial.printf("Unknown provider '%s'. Use: mimo, deepseek, openai, custom\n", val.c_str());
+            Serial.println("Use 'list_providers' to see all options.");
+        }
+    } else if (cmd == "list_providers") {
+        Serial.println("=== Supported Providers ===");
+        for (int i = 0; i < llm_provider_count(); i++) {
+            const LlmProviderInfo* p = llm_provider_by_index(i);
+            const char* hasTts = p->has_tts ? " [TTS]" : "";
+            const char* hasSearch = p->has_web_search ? " [Search]" : "";
+            Serial.printf("  %-10s - %s  host=%s  model=%s%s%s\n",
+                          p->id, p->name, p->host[0] ? p->host : "(user-defined)",
+                          p->default_model[0] ? p->default_model : "(user-defined)",
+                          hasTts, hasSearch);
+        }
+        Serial.printf("Current: %s\n", Config::getLlmProvider().c_str());
     } else if (cmd == "set_mimo_key" || cmd == "set_llm_key") {
         Config::setLlmApiKey(val); Config::save();
-        Serial.println("MiMo key saved");
+        Serial.printf("LLM key saved (%d chars)\n", val.length());
     } else if (cmd == "set_mimo_model" || cmd == "set_llm_model") {
         Config::setLlmModel(val); Config::save();
         Serial.printf("Model: %s\n", val.c_str());
@@ -250,11 +361,18 @@ void processSerialCommands() {
             Serial.println("Usage: set_wechat <bearer_token> <api_host>");
         }
     } else if (cmd == "show_config") {
+        const LlmProviderInfo* info = llm_provider_by_id(Config::getLlmProvider().c_str());
         Serial.println("=== Current Config ===");
         Serial.printf("  WiFi SSID:     %s\n", Config::getSSID().c_str());
         Serial.printf("  WiFi Pass:     [%d chars]\n", Config::getPassword().length());
-        Serial.printf("  MiMo Model:    %s\n", Config::getLlmModel().c_str());
-        Serial.printf("  MiMo Key:      [%d chars]\n", Config::getLlmApiKey().length());
+        if (Config::getSSID2().length() > 0) {
+            Serial.printf("  WiFi2 SSID:    %s\n", Config::getSSID2().c_str());
+            Serial.printf("  WiFi2 Pass:    [%d chars]\n", Config::getPassword2().length());
+        }
+        Serial.printf("  Provider:      %s (%s)\n", Config::getLlmProvider().c_str(),
+                      info ? info->name : "unknown");
+        Serial.printf("  LLM Model:     %s\n", Config::getLlmModel().c_str());
+        Serial.printf("  LLM Key:       [%d chars]\n", Config::getLlmApiKey().length());
         Serial.printf("  City:          %s\n", Config::getCity().c_str());
         Serial.printf("  WeChat Token:  [%d chars]\n", Config::getWechatToken().length());
         Serial.printf("  WeChat Host:   %s\n", Config::getWechatApiHost().c_str());
@@ -1014,8 +1132,9 @@ void updateSetupMode() {
     switch (setupStep) {
         case SetupStep::SSID:        label = "WiFi SSID:";     currentVal = Config::getSSID();         break;
         case SetupStep::PASSWORD:    label = "WiFi Password:";  currentVal = Config::getPassword();     isPass = true; break;
-        case SetupStep::LLM_KEY:     label = "MiMo API Key:";  currentVal = Config::getLlmApiKey();    isPass = true; break;
-        case SetupStep::LLM_MODEL:   label = "MiMo Model:";    currentVal = Config::getLlmModel();     break;
+        case SetupStep::PROVIDER:    label = "Provider:";       currentVal = Config::getLlmProvider();  break;
+        case SetupStep::LLM_KEY:     label = "LLM API Key:";   currentVal = Config::getLlmApiKey();    isPass = true; break;
+        case SetupStep::LLM_MODEL:   label = "LLM Model:";     currentVal = Config::getLlmModel();     break;
         case SetupStep::CITY:        label = "City:";           currentVal = Config::getCity();          break;
         case SetupStep::CONNECTING:
             canvas.drawString("Connecting to WiFi...", 50, 55);
@@ -1028,6 +1147,11 @@ void updateSetupMode() {
     canvas.setTextColor(Color::STATUS_DIM);
     int labelW = canvas.textWidth(label);
     canvas.drawString(hint, 10 + labelW + 4, 25);
+
+    if (setupStep == SetupStep::PROVIDER) {
+        canvas.setTextColor(Color::STATUS_DIM);
+        canvas.drawString("Options: mimo / deepseek / openai / custom", 10, 55);
+    }
 
     canvas.setTextColor(Color::WHITE);
     if (isPass && setupInput.length() > 0) {
@@ -1061,7 +1185,7 @@ void updateSetupMode() {
         totalSteps = 2;
     } else {
         stepNum = (int)setupStep + 1;
-        totalSteps = 5;
+        totalSteps = 6;
     }
     char progress[16];
     snprintf(progress, sizeof(progress), "Step %d/%d", stepNum, totalSteps);
@@ -1098,21 +1222,46 @@ void handleSetupKey(char key, bool enter, bool backspace, bool tab) {
         case SetupStep::PASSWORD:
             if (setupInput.length() > 0) Config::setPassword(setupInput);
             setupInput = "";
-            if (hasPreconfiguredOnlineSettings()) {
-                if (Config::getCity().length() == 0) Config::setCity("Beijing");
-                Config::save();
-                setupStep = SetupStep::CONNECTING;
-                connectWiFi();
-            } else {
-                setupStep = SetupStep::LLM_KEY;
-            }
+            setupStep = SetupStep::PROVIDER;
             break;
+        case SetupStep::PROVIDER: {
+            String provChoice = setupInput;
+            if (provChoice.length() == 0) provChoice = Config::getLlmProvider();
+            if (provChoice.length() == 0) provChoice = M5CLAW_DEFAULT_PROVIDER;
+            const LlmProviderInfo* info = llm_provider_by_id(provChoice.c_str());
+            if (info) {
+                Config::setLlmProvider(provChoice);
+                if (info->default_model[0]) Config::setLlmModel(String(info->default_model));
+                setupInput = "";
+                // Skip API key step if built-in key exists
+                if (Config::getLlmApiKey().length() > 0 || getBuiltInKeyForProvider(provChoice.c_str())) {
+                    if (getBuiltInKeyForProvider(provChoice.c_str())) {
+                        Config::setTransientLlmApiKey(String(getBuiltInKeyForProvider(provChoice.c_str())));
+                    }
+                    if (hasPreconfiguredOnlineSettings()) {
+                        if (Config::getCity().length() == 0) Config::setCity("Beijing");
+                        Config::save();
+                        setupStep = SetupStep::CONNECTING;
+                        connectWiFi();
+                    } else {
+                        setupStep = SetupStep::LLM_MODEL;
+                    }
+                } else {
+                    setupStep = SetupStep::LLM_KEY;
+                }
+            }
+            // If unknown provider, stay on PROVIDER step
+            break;
+        }
         case SetupStep::LLM_KEY:
             if (setupInput.length() > 0) Config::setLlmApiKey(setupInput);
             setupInput = ""; setupStep = SetupStep::LLM_MODEL; break;
         case SetupStep::LLM_MODEL:
             if (setupInput.length() > 0) Config::setLlmModel(setupInput);
-            if (Config::getLlmModel().length() == 0) Config::setLlmModel(M5CLAW_LLM_DEFAULT_MODEL);
+            if (Config::getLlmModel().length() == 0) {
+                const LlmProviderInfo* pi = llm_provider_by_id(Config::getLlmProvider().c_str());
+                if (pi && pi->default_model[0]) Config::setLlmModel(String(pi->default_model));
+            }
             setupInput = ""; setupStep = SetupStep::CITY; break;
         case SetupStep::CITY:
             if (setupInput.length() > 0) Config::setCity(setupInput);
@@ -1214,7 +1363,8 @@ void initOnlineServices() {
 
     llm_client_init(Config::getLlmApiKey().c_str(),
                     Config::getLlmModel().c_str(),
-                    nullptr, nullptr, nullptr);
+                    Config::getLlmProvider().c_str(),
+                    nullptr, nullptr);
 
     weatherClient.begin(Config::getCity());
     Agent::start();
