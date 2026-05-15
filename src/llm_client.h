@@ -33,12 +33,27 @@ struct LlmProviderInfo {
     bool has_web_search;
     int search_max_keyword;
     int search_limit;
+    const char* auth_format;   // nullptr → Bearer; "x-api-key" → x-api-key header
+    const char* api_format;    // nullptr → OpenAI-compat; "anthropic" → Anthropic Messages API
+};
+
+struct TtsProviderInfo {
+    const char* id;
+    const char* name;
+    const char* host;
+    const char* tts_path;
+    const char* tts_model;
+    const char* tts_voice;
+    int tts_sample_rate;
 };
 
 void llm_response_free(LlmResponse* resp);
 
 void llm_client_init(const char* api_key, const char* model, const char* provider,
                      const char* custom_host = nullptr, const char* custom_path = nullptr);
+
+void tts_client_init(const char* tts_provider_id, const char* tts_api_key,
+                     const char* tts_voice);
 
 void llm_client_set_abort_flag(volatile bool* flag);
 
@@ -62,3 +77,10 @@ const LlmProviderInfo* llm_provider_by_id(const char* id);
 const char* llm_current_provider();
 const char* llm_current_host();
 const char* llm_current_model();
+
+// TTS provider queries
+int tts_provider_count();
+const TtsProviderInfo* tts_provider_by_index(int idx);
+const TtsProviderInfo* tts_provider_by_id(const char* id);
+const char* tts_current_provider();
+const char* tts_current_voice();

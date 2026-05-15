@@ -12,6 +12,7 @@
 #define M5CLAW_PROVIDER_MIMO           "mimo"
 #define M5CLAW_PROVIDER_DEEPSEEK       "deepseek"
 #define M5CLAW_PROVIDER_OPENAI         "openai"
+#define M5CLAW_PROVIDER_ANTHROPIC      "anthropic"
 #define M5CLAW_PROVIDER_CUSTOM         "custom"
 #define M5CLAW_DEFAULT_PROVIDER        M5CLAW_PROVIDER_MIMO
 
@@ -35,6 +36,21 @@
 #define M5CLAW_OPENAI_HOST             "api.openai.com"
 #define M5CLAW_OPENAI_CHAT_PATH        "/v1/chat/completions"
 #define M5CLAW_OPENAI_MODEL            "gpt-4o"
+
+// Provider defaults - Anthropic
+#define M5CLAW_ANTHROPIC_HOST          "api.anthropic.com"
+#define M5CLAW_ANTHROPIC_CHAT_PATH     "/v1/messages"
+#define M5CLAW_ANTHROPIC_MODEL         "claude-sonnet-4-6"
+
+// TTS-only provider IDs
+#define M5CLAW_TTS_PROVIDER_SILICONFLOW "siliconflow"
+
+// TTS provider defaults - SiliconFlow
+#define M5CLAW_SILICONFLOW_HOST        "api.siliconflow.cn"
+#define M5CLAW_SILICONFLOW_TTS_PATH    "/v1/audio/speech"
+#define M5CLAW_SILICONFLOW_TTS_MODEL   "FunAudioLLM/CosyVoice2-0.5B"
+#define M5CLAW_SILICONFLOW_TTS_VOICE   "FunAudioLLM/CosyVoice2-0.5B:alex"
+#define M5CLAW_SILICONFLOW_TTS_SAMPLE_RATE 24000
 
 // Backward-compat macro
 #define M5CLAW_LLM_DEFAULT_MODEL       M5CLAW_MIMO_MODEL

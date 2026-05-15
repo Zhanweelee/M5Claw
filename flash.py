@@ -5,17 +5,55 @@ import sys
 import os
 import re
 import json
+import urllib.request
+import urllib.error
 
 CACHE_FILE = ".flash_cache.json"
 
 PROVIDERS = [
-    ("mimo",     "Xiaomi MiMo",   "mimo-v2-omni"),
-    ("deepseek", "DeepSeek",      "deepseek-v4-flash"),
-    ("openai",   "OpenAI",        "gpt-4o"),
-    ("custom",   "Custom",        ""),
+    ("mimo",      "Xiaomi MiMo",    "mimo-v2-omni"),
+    ("deepseek",  "DeepSeek",       "deepseek-v4-flash"),
+    ("openai",    "OpenAI",         "gpt-4o"),
+    ("anthropic", "Anthropic",      "claude-sonnet-4-6"),
+    ("custom",    "Custom",         ""),
 ]
 
 PROVIDER_MAP = {p[0]: p for p in PROVIDERS}
+
+MODEL_LIST_ENDPOINTS = {
+    "deepseek":  {"url": "https://api.deepseek.com/models",        "needs_auth": False, "auth_header": "Bearer"},
+    "openai":    {"url": "https://api.openai.com/v1/models",       "needs_auth": True,  "auth_header": "Bearer"},
+    "anthropic": {"url": "https://api.anthropic.com/v1/models",    "needs_auth": True,  "auth_header": "x-api-key"},
+}
+
+
+def fetch_models(provider_id, api_key=""):
+    """Fetch available model IDs for a provider. Returns (models, error) tuple."""
+    conf = MODEL_LIST_ENDPOINTS.get(provider_id)
+    if not conf:
+        return [], ""
+    url = conf["url"]
+    headers = {}
+    if conf["needs_auth"] and api_key:
+        headers[conf["auth_header"]] = api_key if conf["auth_header"] == "x-api-key" else f"Bearer {api_key}"
+    elif conf["needs_auth"] and not api_key:
+        return [], "API key required to list models for this provider"
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        return [], f"HTTP {e.code}: {e.reason}"
+    except Exception as e:
+        return [], str(e)
+    models = []
+    for item in data.get("data", []):
+        mid = item.get("id", "")
+        if mid:
+            owned = item.get("owned_by", "")
+            models.append((mid, owned))
+    models.sort(key=lambda x: x[0])
+    return models, ""
 
 
 def load_cache(project_dir):
@@ -111,6 +149,32 @@ def interactive_config(project_dir):
     cached_model = cache.get("provider_model", "")
     if pid == "custom":
         config["provider_model"] = prompt("Model name", cached_model or "")
+    elif pid in MODEL_LIST_ENDPOINTS:
+        print()
+        print(f"Fetching {pname} model list...")
+        models, err = fetch_models(pid, provider_key)
+        if err:
+            print(f"  Failed: {err}")
+            config["provider_model"] = prompt("Model name", cached_model or default_model)
+        elif not models:
+            print("  No models returned")
+            config["provider_model"] = prompt("Model name", cached_model or default_model)
+        else:
+            print(f"Available {pname} models ({len(models)}):")
+            for i, (mid, owned) in enumerate(models, 1):
+                owner_tag = f" ({owned})" if owned else ""
+                mark = " <-- cached" if mid == cached_model else ""
+                print(f"  [{i:2d}] {mid}{owner_tag}{mark}")
+            print("  [ 0] Enter model name manually")
+            sel = prompt(f"Select model (0-{len(models)})", "0" if not cached_model else "")
+            try:
+                s = int(sel)
+                if 1 <= s <= len(models):
+                    config["provider_model"] = models[s - 1][0]
+                else:
+                    config["provider_model"] = prompt("Model name", cached_model or default_model)
+            except ValueError:
+                config["provider_model"] = prompt("Model name", cached_model or default_model)
     else:
         config["provider_model"] = prompt("Model name", cached_model or default_model)
 

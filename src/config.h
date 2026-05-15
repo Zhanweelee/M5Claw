@@ -19,6 +19,11 @@ namespace Config {
     const String& getLlmApiKey();
     const String& getLlmModel();
 
+    // TTS config
+    const String& getTtsProvider();
+    const String& getTtsApiKey();
+    const String& getTtsVoice();
+
     // WeChat
     const String& getWechatToken();
     const String& getWechatApiHost();
@@ -31,6 +36,9 @@ namespace Config {
     void setLlmProvider(const String& provider);
     void setLlmApiKey(const String& key);
     void setLlmModel(const String& model);
+    void setTtsProvider(const String& provider);
+    void setTtsApiKey(const String& key);
+    void setTtsVoice(const String& voice);
     void setWechatToken(const String& token);
     void setWechatApiHost(const String& host);
     void setTransientLlmApiKey(const String& key);

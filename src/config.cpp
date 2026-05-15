@@ -90,6 +90,7 @@ static void writeSecret(const char* key, const String& value) {
 
 static String ssid, password, ssid2, password2, city;
 static String llmProvider, llmApiKey, llmModel;
+static String ttsProvider, ttsApiKey, ttsVoice;
 static String wechatToken, wechatApiHost;
 static bool llmApiKeyTransient = false;
 
@@ -118,6 +119,9 @@ bool Config::load() {
     llmProvider     = prefs.getString("llm_provider", "");
     llmApiKey       = readSecret("llm_key");
     llmModel        = prefs.getString("llm_model", "");
+    ttsProvider     = prefs.getString("tts_provider", "");
+    ttsApiKey       = readSecret("tts_key");
+    ttsVoice        = prefs.getString("tts_voice", "");
     wechatToken     = readSecret("wc_token");
     wechatApiHost   = prefs.getString("wc_host", "");
     prefs.end();
@@ -136,6 +140,9 @@ void Config::save() {
     else writeSecret("llm_key",  llmApiKey);
     prefs.putString("llm_provider", llmProvider);
     prefs.putString("llm_model", llmModel);
+    prefs.putString("tts_provider", ttsProvider);
+    writeSecret("tts_key",       ttsApiKey);
+    prefs.putString("tts_voice",  ttsVoice);
     writeSecret("wc_token",      wechatToken);
     prefs.putString("wc_host",   wechatApiHost);
     prefs.end();
@@ -147,6 +154,7 @@ void Config::reset() {
     prefs.end();
     ssid = password = ssid2 = password2 = city = "";
     llmProvider = llmApiKey = llmModel = "";
+    ttsProvider = ttsApiKey = ttsVoice = "";
     wechatToken = wechatApiHost = "";
     llmApiKeyTransient = false;
 }
@@ -210,6 +218,9 @@ const String& Config::getCity()            { return city; }
 const String& Config::getLlmProvider()     { return llmProvider; }
 const String& Config::getLlmApiKey()       { return llmApiKey; }
 const String& Config::getLlmModel()        { return llmModel; }
+const String& Config::getTtsProvider()     { return ttsProvider; }
+const String& Config::getTtsApiKey()       { return ttsApiKey; }
+const String& Config::getTtsVoice()        { return ttsVoice; }
 const String& Config::getWechatToken()     { return wechatToken; }
 const String& Config::getWechatApiHost()   { return wechatApiHost; }
 
@@ -221,6 +232,9 @@ void Config::setCity(const String& c)            { city = c; }
 void Config::setLlmProvider(const String& p)     { llmProvider = p; }
 void Config::setLlmApiKey(const String& k)       { llmApiKey = k; llmApiKeyTransient = false; }
 void Config::setLlmModel(const String& m)        { llmModel = m; }
+void Config::setTtsProvider(const String& p)     { ttsProvider = p; }
+void Config::setTtsApiKey(const String& k)       { ttsApiKey = k; }
+void Config::setTtsVoice(const String& v)        { ttsVoice = v; }
 void Config::setWechatToken(const String& t)     { wechatToken = t; }
 void Config::setWechatApiHost(const String& h)   { wechatApiHost = h; }
 void Config::setTransientLlmApiKey(const String& k) { llmApiKey = k; llmApiKeyTransient = true; }

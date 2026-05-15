@@ -205,7 +205,7 @@ static void processRequest(AgentRequest& req, char* system_prompt, char* tool_ou
     const char* sessionId = req.chatId[0] ? req.chatId : "local";
     JsonDocument* messages = nullptr;
     if (!buildInitialMessages(sessionId, req, &messages)) {
-        const char* errText = "Failed to prepare MiMo request.";
+        const char* errText = "Failed to prepare LLM request.";
         if (req.callback) req.callback(errText);
         if (req.exCallback) {
             AgentResponseInfo info = {errText, req.channel, req.chatId};
@@ -233,7 +233,7 @@ static void processRequest(AgentRequest& req, char* system_prompt, char* tool_ou
             if (s_abortRequested) break;
 
             if (retryCount > 0) {
-                Serial.printf("[AGENT] Retrying MiMo request (%d/10)\n", retryCount);
+                Serial.printf("[AGENT] Retrying LLM request (%d/10)\n", retryCount);
                 delay(2000);
             }
 
@@ -270,7 +270,7 @@ static void processRequest(AgentRequest& req, char* system_prompt, char* tool_ou
         }
 
         if (!ok) {
-            Serial.println("[AGENT] MiMo failed after all retries");
+            Serial.println("[AGENT] LLM failed after all retries");
             break;
         }
 

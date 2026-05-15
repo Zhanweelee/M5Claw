@@ -52,6 +52,9 @@
 #ifndef USER_DEEPSEEK_KEY
 #define USER_DEEPSEEK_KEY ""
 #endif
+#ifndef USER_ANTHROPIC_KEY
+#define USER_ANTHROPIC_KEY ""
+#endif
 #ifndef USER_OPENAI_KEY
 #define USER_OPENAI_KEY ""
 #endif
@@ -135,6 +138,7 @@ static const char* getBuiltInKeyForProvider(const char* provider) {
     if (!provider || !provider[0]) return USER_PROVIDER_API_KEY[0] ? USER_PROVIDER_API_KEY : nullptr;
     if (strcmp(provider, M5CLAW_PROVIDER_MIMO) == 0 && USER_MIMO_KEY[0]) return USER_MIMO_KEY;
     if (strcmp(provider, M5CLAW_PROVIDER_DEEPSEEK) == 0 && USER_DEEPSEEK_KEY[0]) return USER_DEEPSEEK_KEY;
+    if (strcmp(provider, M5CLAW_PROVIDER_ANTHROPIC) == 0 && USER_ANTHROPIC_KEY[0]) return USER_ANTHROPIC_KEY;
     if (strcmp(provider, M5CLAW_PROVIDER_OPENAI) == 0 && USER_OPENAI_KEY[0]) return USER_OPENAI_KEY;
     return USER_PROVIDER_API_KEY[0] ? USER_PROVIDER_API_KEY : nullptr;
 }
@@ -325,6 +329,11 @@ void processSerialCommands() {
                 Serial.printf("Provider: %s (model=%s, enter key manually)\n", info->name, info->default_model);
             }
             Config::save();
+            // Re-init LLM client immediately with new provider
+            llm_client_init(Config::getLlmApiKey().c_str(),
+                            Config::getLlmModel().c_str(),
+                            Config::getLlmProvider().c_str(),
+                            nullptr, nullptr);
         } else {
             Serial.printf("Unknown provider '%s'. Use: mimo, deepseek, openai, custom\n", val.c_str());
             Serial.println("Use 'list_providers' to see all options.");
@@ -343,9 +352,17 @@ void processSerialCommands() {
         Serial.printf("Current: %s\n", Config::getLlmProvider().c_str());
     } else if (cmd == "set_mimo_key" || cmd == "set_llm_key") {
         Config::setLlmApiKey(val); Config::save();
+        llm_client_init(Config::getLlmApiKey().c_str(),
+                        Config::getLlmModel().c_str(),
+                        Config::getLlmProvider().c_str(),
+                        nullptr, nullptr);
         Serial.printf("LLM key saved (%d chars)\n", val.length());
     } else if (cmd == "set_mimo_model" || cmd == "set_llm_model") {
         Config::setLlmModel(val); Config::save();
+        llm_client_init(Config::getLlmApiKey().c_str(),
+                        Config::getLlmModel().c_str(),
+                        Config::getLlmProvider().c_str(),
+                        nullptr, nullptr);
         Serial.printf("Model: %s\n", val.c_str());
     } else if (cmd == "set_city") {
         Config::setCity(val); Config::save();

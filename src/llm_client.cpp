@@ -25,28 +25,53 @@ static const LlmProviderInfo kProviders[] = {
         M5CLAW_PROVIDER_MIMO, "Xiaomi MiMo",
         M5CLAW_MIMO_HOST, M5CLAW_MIMO_CHAT_PATH, M5CLAW_MIMO_MODEL,
         true, M5CLAW_MIMO_TTS_PATH, M5CLAW_MIMO_TTS_MODEL, M5CLAW_MIMO_TTS_VOICE, M5CLAW_MIMO_TTS_SAMPLE_RATE,
-        true, M5CLAW_MIMO_SEARCH_MAX_KEYWORD, M5CLAW_MIMO_SEARCH_LIMIT
+        true, M5CLAW_MIMO_SEARCH_MAX_KEYWORD, M5CLAW_MIMO_SEARCH_LIMIT,
+        nullptr, nullptr
     },
     {
         M5CLAW_PROVIDER_DEEPSEEK, "DeepSeek",
         M5CLAW_DEEPSEEK_HOST, M5CLAW_DEEPSEEK_CHAT_PATH, M5CLAW_DEEPSEEK_MODEL,
         false, nullptr, nullptr, nullptr, 0,
-        false, 0, 0
+        false, 0, 0,
+        nullptr, nullptr
     },
     {
         M5CLAW_PROVIDER_OPENAI, "OpenAI",
         M5CLAW_OPENAI_HOST, M5CLAW_OPENAI_CHAT_PATH, M5CLAW_OPENAI_MODEL,
         false, nullptr, nullptr, nullptr, 0,
-        false, 0, 0
+        false, 0, 0,
+        nullptr, nullptr
+    },
+    {
+        M5CLAW_PROVIDER_ANTHROPIC, "Anthropic",
+        M5CLAW_ANTHROPIC_HOST, M5CLAW_ANTHROPIC_CHAT_PATH, M5CLAW_ANTHROPIC_MODEL,
+        false, nullptr, nullptr, nullptr, 0,
+        false, 0, 0,
+        "x-api-key", "anthropic"
     },
     {
         M5CLAW_PROVIDER_CUSTOM, "Custom",
         "", "/v1/chat/completions", "",
         false, nullptr, nullptr, nullptr, 0,
-        false, 0, 0
+        false, 0, 0,
+        nullptr, nullptr
     },
 };
 static constexpr int kProviderCount = sizeof(kProviders) / sizeof(kProviders[0]);
+
+static const TtsProviderInfo kTtsProviders[] = {
+    {
+        M5CLAW_TTS_PROVIDER_SILICONFLOW, "SiliconFlow",
+        M5CLAW_SILICONFLOW_HOST, M5CLAW_SILICONFLOW_TTS_PATH,
+        M5CLAW_SILICONFLOW_TTS_MODEL, M5CLAW_SILICONFLOW_TTS_VOICE,
+        M5CLAW_SILICONFLOW_TTS_SAMPLE_RATE
+    },
+};
+static constexpr int kTtsProviderCount = sizeof(kTtsProviders) / sizeof(kTtsProviders[0]);
+
+static const TtsProviderInfo* s_tts_provider = nullptr;
+static char s_tts_api_key[320] = {0};
+static char s_tts_voice_override[64] = {0};
 
 static const char* kMediaPlaceholderPrefix = "__M5CLAW_MEDIA|";
 static const char* kMediaPlaceholderSuffix = "__";
@@ -87,6 +112,53 @@ const LlmProviderInfo* llm_provider_by_id(const char* id) {
 
 const char* llm_current_provider() { return s_provider ? s_provider->id : M5CLAW_DEFAULT_PROVIDER; }
 const char* llm_current_model()    { return s_model; }
+
+int tts_provider_count() { return kTtsProviderCount; }
+
+const TtsProviderInfo* tts_provider_by_index(int idx) {
+    if (idx < 0 || idx >= kTtsProviderCount) return nullptr;
+    return &kTtsProviders[idx];
+}
+
+const TtsProviderInfo* tts_provider_by_id(const char* id) {
+    if (!id || !id[0]) return nullptr;
+    for (int i = 0; i < kTtsProviderCount; i++) {
+        if (strcasecmp(kTtsProviders[i].id, id) == 0) return &kTtsProviders[i];
+    }
+    return nullptr;
+}
+
+const char* tts_current_provider() {
+    return s_tts_provider ? s_tts_provider->id : "";
+}
+
+const char* tts_current_voice() {
+    if (s_tts_voice_override[0]) return s_tts_voice_override;
+    if (s_tts_provider) return s_tts_provider->tts_voice;
+    return "";
+}
+
+void tts_client_init(const char* tts_provider_id, const char* tts_api_key,
+                     const char* tts_voice) {
+    s_tts_provider = tts_provider_by_id(tts_provider_id);
+
+    if (tts_api_key && tts_api_key[0]) {
+        safe_copy(s_tts_api_key, sizeof(s_tts_api_key), tts_api_key);
+    } else {
+        s_tts_api_key[0] = '\0';
+    }
+
+    safe_copy(s_tts_voice_override, sizeof(s_tts_voice_override), tts_voice ? tts_voice : "");
+
+    if (s_tts_provider) {
+        Serial.printf("[TTS] Init provider=%s host=%s model=%s voice=%s\n",
+                      s_tts_provider->name, s_tts_provider->host,
+                      s_tts_provider->tts_model, tts_current_voice());
+    } else if (tts_provider_id && tts_provider_id[0]) {
+        Serial.printf("[TTS] Unknown provider '%s', TTS will use LLM provider fallback\n",
+                      tts_provider_id);
+    }
+}
 
 static const char* llm_host() {
     if (s_custom_host[0]) return s_custom_host;
@@ -542,7 +614,7 @@ static void build_tool_response_json(LlmResponse* resp) {
 static void build_openai_body(JsonDocument& doc, const char* system_prompt,
                               JsonDocument& messages, const char* tools_json) {
     doc["model"] = s_model;
-    doc["max_completion_tokens"] = M5CLAW_LLM_MAX_TOKENS;
+    doc["max_tokens"] = M5CLAW_LLM_MAX_TOKENS;
     doc["stream"] = true;
 
     JsonArray msgs = doc["messages"].to<JsonArray>();
@@ -553,28 +625,165 @@ static void build_openai_body(JsonDocument& doc, const char* system_prompt,
     JsonArray src = messages.as<JsonArray>();
     for (JsonVariant v : src) msgs.add(v);
 
-    JsonArray dstTools = doc["tools"].to<JsonArray>();
+    bool hasTools = false;
     if (s_provider && s_provider->has_web_search) {
+        JsonArray dstTools = doc["tools"].to<JsonArray>();
         JsonObject webSearch = dstTools.add<JsonObject>();
         webSearch["type"] = "web_search";
         webSearch["max_keyword"] = s_provider->search_max_keyword;
         webSearch["force_search"] = false;
         webSearch["limit"] = s_provider->search_limit;
+        hasTools = true;
     }
 
     if (tools_json && tools_json[0]) {
         JsonDocument toolsDoc;
         deserializeJson(toolsDoc, tools_json);
         JsonArray srcTools = toolsDoc.as<JsonArray>();
-        for (JsonVariant t : srcTools) {
-            JsonObject wrap = dstTools.add<JsonObject>();
-            wrap["type"] = "function";
-            JsonObject func = wrap["function"].to<JsonObject>();
-            func["name"] = t["name"];
-            if (t["description"]) func["description"] = t["description"];
-            if (t["input_schema"]) func["parameters"] = t["input_schema"];
+        if (srcTools.size() > 0) {
+            JsonArray dstTools = doc["tools"].to<JsonArray>();
+            for (JsonVariant t : srcTools) {
+                JsonObject wrap = dstTools.add<JsonObject>();
+                wrap["type"] = "function";
+                JsonObject func = wrap["function"].to<JsonObject>();
+                func["name"] = t["name"];
+                if (t["description"]) func["description"] = t["description"];
+                if (t["input_schema"]) func["parameters"] = t["input_schema"];
+            }
+            hasTools = true;
         }
     }
+
+    if (!hasTools) doc.remove("tools");
+}
+
+static void build_anthropic_body(JsonDocument& doc, const char* system_prompt,
+                                  JsonDocument& messages, const char* tools_json) {
+    doc["model"] = s_model;
+    doc["max_tokens"] = M5CLAW_LLM_MAX_TOKENS;
+    doc["stream"] = true;
+
+    if (system_prompt && system_prompt[0]) {
+        doc["system"] = system_prompt;
+    }
+
+    JsonArray msgs = doc["messages"].to<JsonArray>();
+    JsonArray src = messages.as<JsonArray>();
+    for (JsonVariant v : src) msgs.add(v);
+
+    if (tools_json && tools_json[0]) {
+        JsonDocument toolsDoc;
+        deserializeJson(toolsDoc, tools_json);
+        JsonArray srcTools = toolsDoc.as<JsonArray>();
+        if (srcTools.size() > 0) {
+            JsonArray dstTools = doc["tools"].to<JsonArray>();
+            for (JsonVariant t : srcTools) {
+                JsonObject tool = dstTools.add<JsonObject>();
+                tool["name"] = t["name"];
+                if (t["description"]) tool["description"] = t["description"];
+                if (t["input_schema"]) tool["input_schema"] = t["input_schema"];
+            }
+        }
+    }
+}
+
+static bool process_anthropic_stream(ChunkedReader& reader, LlmResponse* resp,
+                                      LlmStreamCallback on_token) {
+    char* line = (char*)alloc_prefer_psram(M5CLAW_SSE_LINE_BUF);
+    if (!line) return false;
+
+    String tool_inputs[M5CLAW_MAX_TOOL_CALLS];
+    int tool_indices[M5CLAW_MAX_TOOL_CALLS] = {};
+    int next_tool_slot = 0;
+    bool got_response = false;
+
+    while (!is_aborted()) {
+        if (!read_sse_line(reader, line, M5CLAW_SSE_LINE_BUF)) break;
+        if (strncmp(line, "data: ", 6) != 0) continue;
+        const char* data = line + 6;
+
+        JsonDocument chunk;
+        if (deserializeJson(chunk, data) != DeserializationError::Ok) continue;
+
+        const char* type = chunk["type"] | "";
+
+        if (strcmp(type, "content_block_delta") == 0) {
+            JsonObject delta = chunk["delta"];
+            const char* deltaType = delta["type"] | "";
+            int idx = chunk["index"] | 0;
+
+            if (strcmp(deltaType, "text_delta") == 0) {
+                const char* text = delta["text"] | "";
+                if (text[0]) {
+                    size_t tlen = strlen(text);
+                    text_append(resp, text, tlen);
+                    if (on_token) on_token(text);
+                    got_response = true;
+                }
+            } else if (strcmp(deltaType, "input_json_delta") == 0) {
+                const char* partial = delta["partial_json"] | "";
+                if (partial[0]) {
+                    int slot = -1;
+                    for (int i = 0; i < next_tool_slot; i++) {
+                        if (tool_indices[i] == idx) { slot = i; break; }
+                    }
+                    if (slot < 0 && next_tool_slot < M5CLAW_MAX_TOOL_CALLS) {
+                        slot = next_tool_slot++;
+                        tool_indices[slot] = idx;
+                        if (slot >= resp->call_count) resp->call_count = slot + 1;
+                    }
+                    if (slot >= 0) tool_inputs[slot] += partial;
+                }
+            }
+        } else if (strcmp(type, "content_block_start") == 0) {
+            JsonObject block = chunk["content_block"];
+            const char* blockType = block["type"] | "";
+            int idx = chunk["index"] | 0;
+
+            if (strcmp(blockType, "tool_use") == 0) {
+                int slot = -1;
+                for (int i = 0; i < next_tool_slot; i++) {
+                    if (tool_indices[i] == idx) { slot = i; break; }
+                }
+                if (slot < 0 && next_tool_slot < M5CLAW_MAX_TOOL_CALLS) {
+                    slot = next_tool_slot++;
+                    tool_indices[slot] = idx;
+                    if (slot >= resp->call_count) resp->call_count = slot + 1;
+                }
+                if (slot >= 0) {
+                    LlmToolCall& call = resp->calls[slot];
+                    const char* tcId = block["id"] | "";
+                    const char* tcName = block["name"] | "";
+                    if (tcId[0]) strlcpy(call.id, tcId, sizeof(call.id));
+                    if (tcName[0]) strlcpy(call.name, tcName, sizeof(call.name));
+                }
+            }
+        } else if (strcmp(type, "message_delta") == 0) {
+            JsonObject delta = chunk["delta"];
+            const char* stop = delta["stop_reason"] | "";
+            if (strcmp(stop, "tool_use") == 0) {
+                resp->tool_use = true;
+            }
+            got_response = true;
+        } else if (strcmp(type, "message_stop") == 0) {
+            got_response = true;
+            break;
+        }
+    }
+
+    for (int i = 0; i < resp->call_count; i++) {
+        if (tool_inputs[i].length() > 0 && resp->calls[i].input == nullptr) {
+            resp->calls[i].input = strdup(tool_inputs[i].c_str());
+            resp->calls[i].input_len = tool_inputs[i].length();
+        }
+    }
+    if (resp->call_count > 0) {
+        resp->tool_use = true;
+        build_tool_response_json(resp);
+    }
+
+    heap_caps_free(line);
+    return got_response;
 }
 
 static bool process_openai_stream(ChunkedReader& reader, LlmResponse* resp,
@@ -723,11 +932,20 @@ bool llm_chat_tools(const char* system_prompt,
         return false;
     }
 
+    bool isAnthropic = s_provider && s_provider->api_format &&
+                       strcmp(s_provider->api_format, "anthropic") == 0;
+    bool isXApiKey = s_provider && s_provider->auth_format &&
+                     strcmp(s_provider->auth_format, "x-api-key") == 0;
+
     void* bodyDocMem = alloc_prefer_psram(sizeof(JsonDocument));
     JsonDocument* bodyDoc = bodyDocMem ? new (bodyDocMem) JsonDocument : nullptr;
     if (!bodyDoc) return false;
 
-    build_openai_body(*bodyDoc, system_prompt, messages, tools_json);
+    if (isAnthropic) {
+        build_anthropic_body(*bodyDoc, system_prompt, messages, tools_json);
+    } else {
+        build_openai_body(*bodyDoc, system_prompt, messages, tools_json);
+    }
 
     String bodyStr;
     bodyStr.reserve(8192);
@@ -751,7 +969,12 @@ bool llm_chat_tools(const char* system_prompt,
     client.printf("Host: %s\r\n", llm_host());
     client.println("Content-Type: application/json");
     client.println("Accept: text/event-stream");
-    client.printf("Authorization: Bearer %s\r\n", s_api_key);
+    if (isXApiKey) {
+        client.printf("x-api-key: %s\r\n", s_api_key);
+        client.println("anthropic-version: 2023-06-01");
+    } else {
+        client.printf("Authorization: Bearer %s\r\n", s_api_key);
+    }
     size_t contentLen = 0;
     size_t sentLen = 0;
     if (!send_request_body(client, bodyStr, &contentLen, &sentLen)) {
@@ -802,7 +1025,12 @@ bool llm_chat_tools(const char* system_prompt,
     }
 
     ChunkedReader reader(client, meta.chunked);
-    bool ok = process_openai_stream(reader, resp, on_token);
+    bool ok;
+    if (isAnthropic) {
+        ok = process_anthropic_stream(reader, resp, on_token);
+    } else {
+        ok = process_openai_stream(reader, resp, on_token);
+    }
     client.stop();
 
     if (!ok && (!resp->text || resp->text_len == 0) && resp->call_count == 0) {
@@ -939,6 +1167,52 @@ static bool extract_audio_b64(const char* body, size_t bodyLen, String& audioB64
     if (!candidate[0]) return false;
 
     audioB64 = candidate;
+    return true;
+}
+
+static bool tts_post_json_to_host(const char* host, const char* path,
+                                   const char* api_key, const String& bodyStr,
+                                   HttpResponseMeta* meta, char** body, size_t* bodyLen) {
+    *body = nullptr;
+    *bodyLen = 0;
+
+    WiFiClientSecure client;
+    if (!secure_connect(client, host, 443, "[TTS]")) return false;
+
+    client.printf("POST %s HTTP/1.1\r\n", path);
+    client.printf("Host: %s\r\n", host);
+    client.println("Content-Type: application/json");
+    client.println("Accept: application/json, audio/*, application/octet-stream");
+    client.printf("Authorization: Bearer %s\r\n", api_key);
+    client.printf("Content-Length: %d\r\n", bodyStr.length());
+    client.println("Connection: close");
+    client.println();
+    client.print(bodyStr);
+
+    HttpResponseMeta localMeta = {};
+    if (!read_http_headers(client, &localMeta)) {
+        client.stop();
+        return false;
+    }
+
+    char* respBody = nullptr;
+    size_t respLen = 0;
+    bool ok = read_json_body(client, localMeta.chunked, &respBody, &respLen, 256 * 1024);
+    client.stop();
+    if (meta) *meta = localMeta;
+    if (!ok || !respBody) return false;
+
+    if (localMeta.status_code < 200 || localMeta.status_code >= 300) {
+        Serial.printf("[TTS] HTTP %d host=%s path=%s type=%s\n",
+                      localMeta.status_code, host, path,
+                      localMeta.content_type[0] ? localMeta.content_type : "(unknown)");
+        Serial.printf("[TTS] Error body: %.200s\n", respBody);
+        heap_caps_free(respBody);
+        return false;
+    }
+
+    *body = respBody;
+    *bodyLen = respLen;
     return true;
 }
 
