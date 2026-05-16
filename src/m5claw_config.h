@@ -58,6 +58,12 @@
 #define M5CLAW_SILICONFLOW_TTS_VOICE   "FunAudioLLM/CosyVoice2-0.5B:alex"
 #define M5CLAW_SILICONFLOW_TTS_SAMPLE_RATE 24000
 
+// Bocha Web Search
+#define M5CLAW_BOCHA_HOST              "api.bochaai.com"
+#define M5CLAW_BOCHA_SEARCH_PATH       "/v1/web-search"
+#define M5CLAW_BOCHA_DEFAULT_COUNT     5
+#define M5CLAW_BOCHA_MAX_COUNT         10
+
 // STT-only provider IDs
 #define M5CLAW_STT_PROVIDER_SILICONFLOW  "siliconflow"
 
