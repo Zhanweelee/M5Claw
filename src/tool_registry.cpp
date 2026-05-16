@@ -471,19 +471,24 @@ static bool tool_web_search(const char* input, char* output, size_t sz) {
     serializeJson(reqDoc, reqBody);
 
     WiFiClientSecure client;
+    // Bocha cert not in ESP32 x509 bundle — use insecure connection.
+    client.setInsecure();
     client.setTimeout(15);
-    TlsConfig::configureClient(client, 15);
+
+    Serial.printf("[WEB_SEARCH] POST https://%s%s query=%s count=%d\n",
+                  M5CLAW_BOCHA_HOST, M5CLAW_BOCHA_SEARCH_PATH, query, count);
 
     if (!client.connect(M5CLAW_BOCHA_HOST, 443)) {
+        Serial.println("[WEB_SEARCH] Connection failed");
         strlcpy(output, "Bocha API connection failed", sz);
         return false;
     }
 
     client.printf("POST %s HTTP/1.1\r\n", M5CLAW_BOCHA_SEARCH_PATH);
     client.printf("Host: %s\r\n", M5CLAW_BOCHA_HOST);
+    client.print("Connection: close\r\n");
     client.print("Authorization: Bearer ");
     client.println(apiKey);
-    client.print("Connection: close\r\n");
     client.print("Content-Type: application/json\r\n");
     client.printf("Content-Length: %d\r\n", reqBody.length());
     client.print("\r\n");
@@ -492,6 +497,7 @@ static bool tool_web_search(const char* input, char* output, size_t sz) {
     // Read status line
     String statusLine = client.readStringUntil('\n');
     statusLine.trim();
+    Serial.printf("[WEB_SEARCH] Status: %s\n", statusLine.c_str());
     if (statusLine.indexOf("200") < 0) {
         snprintf(output, sz, "Bocha API HTTP error: %s", statusLine.c_str());
         client.stop();
@@ -516,6 +522,7 @@ static bool tool_web_search(const char* input, char* output, size_t sz) {
     if (bodyLen > 8192) bodyLen = 8192;
     char* bodyBuf = (char*)alloc_prefer_psram(bodyLen + 1);
     if (!bodyBuf) {
+        Serial.println("[WEB_SEARCH] Body allocation failed");
         strlcpy(output, "Memory allocation failed for search response", sz);
         client.stop();
         return false;
@@ -527,26 +534,35 @@ static bool tool_web_search(const char* input, char* output, size_t sz) {
         if (client.available()) {
             bodyBuf[readBytes++] = client.read();
         }
+        yield();
     }
     bodyBuf[readBytes] = '\0';
     client.stop();
 
+    Serial.printf("[WEB_SEARCH] Body: %.*s\n", (int)readBytes, bodyBuf);
+
     // Parse response
     JsonDocument respDoc;
     DeserializationError err = deserializeJson(respDoc, bodyBuf);
-    free(bodyBuf);
 
     if (err) {
-        strlcpy(output, "Failed to parse search response", sz);
+        Serial.printf("[WEB_SEARCH] JSON parse error: %s\n", err.c_str());
+        snprintf(output, sz, "Failed to parse search response: %s", err.c_str());
+        free(bodyBuf);
         return false;
     }
+    free(bodyBuf);
 
     // Extract webPages array
     JsonArray webPages = respDoc["data"]["webPages"].as<JsonArray>();
     if (!webPages || webPages.size() == 0) {
+        Serial.println("[WEB_SEARCH] No results");
         strlcpy(output, "No search results found", sz);
         return true;
     }
+
+    int numResults = webPages.size();
+    Serial.printf("[WEB_SEARCH] %d results\n", numResults);
 
     // Format results for LLM
     size_t off = 0;
