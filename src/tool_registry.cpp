@@ -8,6 +8,7 @@
 #include <SPIFFS.h>
 #include <WiFiClientSecure.h>
 #include "tls_utils.h"
+#include <esp_heap_caps.h>
 #include <time.h>
 
 static int64_t currentEpoch() {
