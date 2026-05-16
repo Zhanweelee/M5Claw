@@ -175,16 +175,11 @@ void Companion::drawTopBar(M5Canvas& canvas) {
     uint16_t bg = rgb565(12, 12, 20);
     canvas.setTextSize(1);
 
-    drawOText(canvas, "[Tab]chat", 3, 3, fg, bg);
+    drawOText(canvas, "[FN+H]help", 3, 3, fg, bg);
 
-    int hintX = canvas.textWidth("[Tab]chat") + 12;
-    if (Config::getSttProvider().length() > 0) {
-        drawOText(canvas, "[fn]talk", hintX, 3,
-                  rgb565(100, 200, 255), bg);
-        hintX += canvas.textWidth("[fn]talk") + 8;
-    }
     if (Config::getMuteTts()) {
-        drawOText(canvas, "[M]", hintX, 3,
+        int hintX = canvas.textWidth("[FN+H]help") + 12;
+        drawOText(canvas, "M", hintX, 3,
                   rgb565(255, 200, 60), bg);
     }
 
@@ -286,6 +281,48 @@ void Companion::drawNotificationOverlay(M5Canvas& canvas) {
     canvas.drawString(line1, 4, 2);
     canvas.setTextColor(Color::CLOCK_TEXT);
     canvas.drawString(notifyBody, 4, 15);
+}
+
+void Companion::drawHelpOverlay(M5Canvas& canvas) {
+    if (!helpActive) return;
+
+    canvas.fillRect(0, 0, SCREEN_W, SCREEN_H, rgb565(8, 8, 18));
+    canvas.setTextSize(1);
+
+    int y = 6;
+    const int lx = 6, rx = SCREEN_W / 2 + 4;
+    const uint16_t keyClr = rgb565(255, 200, 60);
+    const uint16_t descClr = rgb565(200, 200, 220);
+    const uint16_t hdrClr = rgb565(120, 180, 255);
+
+    canvas.setTextColor(hdrClr);
+    canvas.drawString("Companion", lx, y);
+    canvas.drawString("Chat", rx, y);
+    y += 14;
+
+    auto row = [&](int col, const char* key, const char* desc) {
+        int cx = col == 0 ? lx : rx;
+        canvas.setTextColor(keyClr);
+        canvas.drawString(key, cx, y);
+        canvas.setTextColor(descClr);
+        canvas.drawString(desc, cx + canvas.textWidth(key) + 4, y);
+        y += 12;
+    };
+
+    row(0, "[Tab]", "Chat");
+    row(0, "[Fn]hold", "Voice talk");
+    row(0, "[Fn]+M", "Toggle mute");
+    row(0, "[Fn]+R", "Reset WiFi");
+    row(0, "[Ctrl]", "WeChat");
+    row(0, "Shake", "Cycle scenes");
+
+    y = 6 + 14;
+    row(1, "[Alt]", "Back");
+    row(1, "[Tab/Ctrl]", "Scroll");
+    row(1, "[Fn]hold", "Voice");
+
+    canvas.setTextColor(rgb565(140, 140, 160));
+    canvas.drawString("[FN+H] or any key to close", lx, SCREEN_H - 14);
 }
 
 // ══════════════════════════════════════════════════════════════

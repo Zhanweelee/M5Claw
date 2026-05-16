@@ -948,13 +948,15 @@ void loop() {
             }
 
             if (keyPressed) {
-                if (ks.tab) {
+                if (companion.isHelpActive()) {
+                    companion.hideHelp();
+                    prevFn = ks.fn;
+                } else if (ks.tab) {
                     prevFn = ks.fn;
                     playTransition(canvas, true);
                     enterChatMode();
                     break;
-                }
-                if (ks.ctrl) {
+                } else if (ks.ctrl) {
                     prevFn = ks.fn;
                     playTransitionVertical(canvas, true);
                     appMode = AppMode::WECHAT_STATUS;
@@ -979,6 +981,11 @@ void loop() {
                         prevFn = ks.fn;
                         break;
                     }
+                    if (ks.word[0] == 'h') {
+                        companion.showHelp();
+                        prevFn = ks.fn;
+                        break;
+                    }
                 }
                 if (!ks.fn && !voiceRecording) Companion::playKeyClick();
             }
@@ -994,6 +1001,7 @@ void loop() {
             companion.setWeather(weatherClient.getData());
             companion.update(canvas);
             companion.drawNotificationOverlay(canvas);
+            companion.drawHelpOverlay(canvas);
 
             // Recording indicator bar
             if (voiceRecording) {
