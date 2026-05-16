@@ -7,6 +7,7 @@
 #include <ArduinoJson.h>
 #include <SPIFFS.h>
 #include <WiFiClientSecure.h>
+#include "tls_utils.h"
 #include <time.h>
 
 static int64_t currentEpoch() {
@@ -438,6 +439,12 @@ static bool tool_wechat_send(const char* input, char* output, size_t sz) {
     return true;
 }
 
+static void* alloc_prefer_psram(size_t size) {
+    void* p = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!p) p = heap_caps_malloc(size, MALLOC_CAP_8BIT);
+    return p;
+}
+
 /* ── web_search ───────────────────────────────────── */
 static bool tool_web_search(const char* input, char* output, size_t sz) {
     const String& apiKey = Config::getBochaApiKey();
@@ -464,7 +471,7 @@ static bool tool_web_search(const char* input, char* output, size_t sz) {
 
     WiFiClientSecure client;
     client.setTimeout(15);
-    client.setInsecure();
+    TlsConfig::configureClient(client, 15);
 
     if (!client.connect(M5CLAW_BOCHA_HOST, 443)) {
         strlcpy(output, "Bocha API connection failed", sz);
@@ -475,6 +482,7 @@ static bool tool_web_search(const char* input, char* output, size_t sz) {
     client.printf("Host: %s\r\n", M5CLAW_BOCHA_HOST);
     client.print("Authorization: Bearer ");
     client.println(apiKey);
+    client.print("Connection: close\r\n");
     client.print("Content-Type: application/json\r\n");
     client.printf("Content-Length: %d\r\n", reqBody.length());
     client.print("\r\n");
@@ -483,7 +491,6 @@ static bool tool_web_search(const char* input, char* output, size_t sz) {
     // Read status line
     String statusLine = client.readStringUntil('\n');
     statusLine.trim();
-    int httpCode = 0;
     if (statusLine.indexOf("200") < 0) {
         snprintf(output, sz, "Bocha API HTTP error: %s", statusLine.c_str());
         client.stop();
@@ -491,23 +498,22 @@ static bool tool_web_search(const char* input, char* output, size_t sz) {
     }
 
     // Skip headers
-    String headers;
+    unsigned long hdrDeadline = millis() + 5000;
     String contentLength;
-    while (client.connected()) {
+    while (client.connected() && millis() < hdrDeadline) {
         String line = client.readStringUntil('\n');
         if (line == "\r" || line == "") break;
         if (line.startsWith("Content-Length:")) {
             contentLength = line.substring(15);
             contentLength.trim();
         }
-        headers += line;
     }
 
     // Read body
     size_t bodyLen = contentLength.length() > 0 ? contentLength.toInt() : 8192;
     if (bodyLen < 4) bodyLen = 4;
     if (bodyLen > 8192) bodyLen = 8192;
-    char* bodyBuf = new char[bodyLen + 1];
+    char* bodyBuf = (char*)alloc_prefer_psram(bodyLen + 1);
     if (!bodyBuf) {
         strlcpy(output, "Memory allocation failed for search response", sz);
         client.stop();
@@ -527,7 +533,7 @@ static bool tool_web_search(const char* input, char* output, size_t sz) {
     // Parse response
     JsonDocument respDoc;
     DeserializationError err = deserializeJson(respDoc, bodyBuf);
-    delete[] bodyBuf;
+    free(bodyBuf);
 
     if (err) {
         strlcpy(output, "Failed to parse search response", sz);
