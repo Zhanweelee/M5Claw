@@ -466,6 +466,7 @@ static bool tool_web_search(const char* input, char* output, size_t sz) {
     JsonDocument reqDoc;
     reqDoc["query"] = query;
     reqDoc["count"] = count;
+    reqDoc["summary"] = true;
 
     String reqBody;
     serializeJson(reqDoc, reqBody);
@@ -554,7 +555,7 @@ static bool tool_web_search(const char* input, char* output, size_t sz) {
     free(bodyBuf);
 
     // Extract webPages array
-    JsonArray webPages = respDoc["data"]["webPages"].as<JsonArray>();
+    JsonArray webPages = respDoc["data"]["webPages"]["value"].as<JsonArray>();
     if (!webPages || webPages.size() == 0) {
         Serial.println("[WEB_SEARCH] No results");
         strlcpy(output, "No search results found", sz);
@@ -568,7 +569,7 @@ static bool tool_web_search(const char* input, char* output, size_t sz) {
     size_t off = 0;
     int num = 0;
     for (JsonVariant page : webPages) {
-        const char* title = page["title"] | "";
+        const char* title = page["name"] | "";
         const char* url = page["url"] | "";
         const char* snippet = page["snippet"] | page["summary"] | "";
 
