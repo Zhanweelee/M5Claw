@@ -15,6 +15,7 @@ public:
     bool hasValidWeather() const { return weather.valid; }
 
     void cycleSunset();
+    void startAutoCycle();
 
     void triggerHappy();
     void triggerTalk();
@@ -42,6 +43,13 @@ private:
     static constexpr int TRANSITION_STEP   = 10;
     static constexpr int STAGGER_RANGE     = 80;
     static constexpr int TRANSITION_END    = 255 + STAGGER_RANGE;
+
+    // Auto scene cycling
+    float autoCycleTimer = 0;
+    float autoCycleNext  = 0;
+    static constexpr float AUTO_CYCLE_DURATION = 10.0f;
+    static constexpr float CYCLE_INTERVAL      = 2.5f;
+    bool wasRaining = false;
 
     void drawScene(M5Canvas& canvas);
     void drawTopBar(M5Canvas& canvas);
