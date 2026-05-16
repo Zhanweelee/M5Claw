@@ -1,4 +1,5 @@
 #include "companion.h"
+#include "config.h"
 #include "sunset_data.h"
 #include <time.h>
 #include <math.h>
@@ -27,9 +28,22 @@ void Companion::begin(M5Canvas&) {
     targetScene  = 1;
     transitionActive = false;
     transitionAlpha  = 0;
+    anim.begin();
 }
 
 void Companion::update(M5Canvas& canvas) {
+    static unsigned long lastMs = millis();
+    unsigned long now = millis();
+    float dt = (now - lastMs) / 1000.0f;
+    if (dt > 0.1f) dt = 0.016f; // cap on first frame or lag spike
+    lastMs = now;
+
+    // Read IMU for tap/shake detection
+    float ax, ay, az;
+    M5.Imu.update();
+    M5.Imu.getAccel(&ax, &ay, &az);
+    anim.update(dt, ax, ay, az);
+
     if (transitionActive) {
         transitionAlpha += TRANSITION_STEP;
         if (transitionAlpha >= TRANSITION_END) {
@@ -39,6 +53,9 @@ void Companion::update(M5Canvas& canvas) {
         }
     }
     drawScene(canvas);
+    anim.drawFire(canvas);
+    anim.drawRain(canvas);
+    anim.drawChar(canvas);
     drawTopBar(canvas);
 }
 
@@ -135,6 +152,11 @@ void Companion::drawTopBar(M5Canvas& canvas) {
 
     drawOText(canvas, "[Tab]chat", 3, 3, fg, bg);
 
+    if (Config::getMuteTts()) {
+        drawOText(canvas, "[M]", canvas.textWidth("[Tab]chat") + 12, 3,
+                  rgb565(255, 200, 60), bg);
+    }
+
     struct tm timeinfo;
     if (getLocalTime(&timeinfo, 0)) {
         char buf[6];
@@ -192,6 +214,10 @@ void Companion::playHappy() {
     M5Cardputer.Speaker.tone(1000, 50); delay(60);
     M5Cardputer.Speaker.tone(1400, 50); delay(60);
     M5Cardputer.Speaker.tone(1800, 80);
+}
+void Companion::playMarioCoin() {
+    M5Cardputer.Speaker.tone(1976, 55); delay(65);
+    M5Cardputer.Speaker.tone(2637, 110);
 }
 
 void Companion::triggerHappy() { playHappy(); }

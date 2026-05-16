@@ -94,6 +94,7 @@ static String llmProvider, llmApiKey, llmModel;
 static String ttsProvider, ttsApiKey, ttsModel, ttsVoice;
 static String sttProvider, sttApiKey, sttModel;
 static String wechatToken, wechatApiHost;
+static bool muteTts = false;
 static bool llmApiKeyTransient = false;
 
 static bool applyBootstrapValue(const JsonVariantConst& value, String& target) {
@@ -131,6 +132,7 @@ bool Config::load() {
     sttProvider     = prefs.getString("stt_provider", "");
     sttApiKey       = readSecret("stt_key");
     sttModel        = prefs.getString("stt_model", "");
+    muteTts         = prefs.getBool("mute_tts", false);
     prefs.end();
     llmApiKeyTransient = false;
     return ssid.length() > 0;
@@ -157,6 +159,7 @@ void Config::save() {
     prefs.putString("stt_provider", sttProvider);
     writeSecret("stt_key",       sttApiKey);
     prefs.putString("stt_model",  sttModel);
+    prefs.putBool("mute_tts",    muteTts);
     prefs.end();
 }
 
@@ -170,6 +173,7 @@ void Config::reset() {
     ttsProvider = ttsApiKey = ttsModel = ttsVoice = "";
     wechatToken = wechatApiHost = "";
     sttProvider = sttApiKey = sttModel = "";
+    muteTts = false;
     llmApiKeyTransient = false;
 }
 
@@ -242,6 +246,7 @@ const String& Config::getWechatApiHost()   { return wechatApiHost; }
 const String& Config::getSttProvider()     { return sttProvider; }
 const String& Config::getSttApiKey()       { return sttApiKey; }
 const String& Config::getSttModel()        { return sttModel; }
+bool Config::getMuteTts()                  { return muteTts; }
 
 void Config::setSSID(const String& s)            { ssid = s; }
 void Config::setPassword(const String& p)        { password = p; }
@@ -261,6 +266,7 @@ void Config::setWechatApiHost(const String& h)   { wechatApiHost = h; }
 void Config::setSttProvider(const String& p)     { sttProvider = p; }
 void Config::setSttApiKey(const String& k)       { sttApiKey = k; }
 void Config::setSttModel(const String& m)        { sttModel = m; }
+void Config::setMuteTts(bool mute)                { muteTts = mute; }
 void Config::setTransientLlmApiKey(const String& k) { llmApiKey = k; llmApiKeyTransient = true; }
 
 bool Config::isValid() { return ssid.length() > 0 && llmApiKey.length() > 0; }

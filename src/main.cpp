@@ -103,6 +103,10 @@ static bool s_voiceWriteFailed = false;
 static bool s_playTtsForNextLocalReply = false;
 
 static bool speakReplyWithPause(const char* text) {
+    if (Config::getMuteTts()) {
+        Companion::playMarioCoin();
+        return true;
+    }
     bool wechatWasActive = WechatBot::isRunning();
     if (wechatWasActive) {
         WechatBot::stop();
@@ -266,7 +270,7 @@ static const char* const NVS_KEYS[] = {
     "city", "assistant_name",
     "tts_provider", "tts_key", "tts_model", "tts_voice",
     "stt_provider", "stt_key", "stt_model",
-    "wc_token", "wc_host"
+    "wc_token", "wc_host", "mute_tts"
 };
 
 static String nvsGet(const char* key) {
@@ -287,6 +291,7 @@ static String nvsGet(const char* key) {
     if (strcmp(key, "stt_model") == 0) return Config::getSttModel();
     if (strcmp(key, "wc_token") == 0)  return Config::getWechatToken();
     if (strcmp(key, "wc_host") == 0)   return Config::getWechatApiHost();
+    if (strcmp(key, "mute_tts") == 0)  return Config::getMuteTts() ? "1" : "0";
     return "";
 }
 
@@ -307,6 +312,7 @@ static void nvsSet(const char* key, const char* value) {
     else if (strcmp(key, "stt_model") == 0) Config::setSttModel(value);
     else if (strcmp(key, "wc_token") == 0)  Config::setWechatToken(value);
     else if (strcmp(key, "wc_host") == 0)   Config::setWechatApiHost(value);
+    else if (strcmp(key, "mute_tts") == 0)  Config::setMuteTts(strcmp(value, "0") != 0 && strcmp(value, "false") != 0);
     Config::save();
 }
 
@@ -366,6 +372,7 @@ void processSerialCommands() {
         Serial.println("  set_stt_model <model>    - Set STT model override");
         Serial.println("  set_city <city>           - e.g. Beijing");
         Serial.println("  set_assistant_name <name> - Set assistant identity name");
+        Serial.println("  set_mute_tts <on|off>     - Mute voice output (play chime instead)");
         Serial.println("  set_wechat <token> <host> - Set WeChat bot credentials");
         Serial.println("  show_config               - Show current config");
         Serial.println("  list_providers            - List supported providers");
@@ -567,6 +574,17 @@ void processSerialCommands() {
     } else if (cmd == "set_assistant_name") {
         Config::setAssistantName(val); Config::save();
         Serial.printf("Assistant name: %s\n", val.c_str());
+    } else if (cmd == "set_mute_tts") {
+        bool on = (val == "on" || val == "1" || val == "true");
+        bool off = (val == "off" || val == "0" || val == "false");
+        if (on || off) {
+            Config::setMuteTts(on);
+            Config::save();
+            Serial.printf("Voice mute: %s\n", on ? "ON (chime only)" : "OFF (full speech)");
+        } else {
+            Serial.printf("Usage: set_mute_tts <on|off>\nCurrent: %s\n",
+                         Config::getMuteTts() ? "on" : "off");
+        }
     } else if (cmd == "set_wechat") {
         int sp = val.indexOf(' ');
         if (sp > 0) {
@@ -611,6 +629,7 @@ void processSerialCommands() {
             if (Config::getSttModel().length() > 0)
                 Serial.printf("  STT Model:     %s\n", Config::getSttModel().c_str());
         }
+        Serial.printf("  Voice Mute:    %s\n", Config::getMuteTts() ? "ON" : "OFF");
         Serial.printf("  WeChat Token:  [%d chars]\n", Config::getWechatToken().length());
         Serial.printf("  WeChat Host:   %s\n", Config::getWechatApiHost().c_str());
         Serial.printf("  Valid:         %s\n", Config::isValid() ? "YES" : "NO");
@@ -860,6 +879,14 @@ void loop() {
                         Config::save();
                         prevFn = ks.fn;
                         enterSetupMode();
+                        break;
+                    }
+                    if (ks.word[0] == 'm') {
+                        bool muted = !Config::getMuteTts();
+                        Config::setMuteTts(muted);
+                        Config::save();
+                        Companion::playKeyClick();
+                        prevFn = ks.fn;
                         break;
                     }
                 }

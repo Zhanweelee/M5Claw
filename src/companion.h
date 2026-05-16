@@ -2,6 +2,7 @@
 #include <M5Cardputer.h>
 #include "utils.h"
 #include "weather_client.h"
+#include "animation.h"
 
 class Companion {
 public:
@@ -27,9 +28,11 @@ public:
     static void playKeyClick();
     static void playNotification();
     static void playHappy();
+    static void playMarioCoin();
 
 private:
     WeatherData weather;
+    AnimationState anim;
 
     int currentScene = 1;
     int targetScene  = 1;
