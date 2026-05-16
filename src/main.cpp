@@ -897,21 +897,23 @@ void loop() {
                 fnRecordTriggered = false;
             }
 
-            // Start voice recording on fn hold (120ms debounce)
+            // Start voice recording on fn hold (300ms debounce)
             if (!offlineMode && fnAlone && !fnRecordTriggered && !voiceRecording
                 && !Agent::isBusy()
-                && fnHoldStartMs != 0 && millis() - fnHoldStartMs >= 120) {
+                && fnHoldStartMs != 0 && millis() - fnHoldStartMs >= 300) {
                 startVoiceRecording();
                 fnRecordTriggered = voiceRecording;
             }
 
-            // Stop voice recording on fn release
+            // Stop voice recording on fn release → enter chat
             if (fnUp && voiceRecording) {
                 String audioPath = stopVoiceRecording();
                 if (!offlineMode && audioPath.length() > 0) {
-                    companion.triggerTalk();
+                    enterChatMode();
+                    chat.addMessage("[voice]", true);
+                    chat.addMessage("thinking...", false);
                     s_hasStreamedTokens = false;
-                    s_companionVoiceReply = true;
+                    s_playTtsForNextLocalReply = true;
                     Agent::sendVoiceMessage(audioPath.c_str(), "audio/wav", onAgentResponse, onAgentToken);
                 } else if (audioPath.length() > 0) {
                     SPIFFS.remove(audioPath.c_str());
@@ -927,9 +929,11 @@ void loop() {
                 if (millis() - recordingStartMs >= M5CLAW_AUDIO_MAX_SECONDS * 1000UL) {
                     String audioPath = stopVoiceRecording();
                     if (!offlineMode && audioPath.length() > 0) {
-                        companion.triggerTalk();
+                        enterChatMode();
+                        chat.addMessage("[voice]", true);
+                        chat.addMessage("thinking...", false);
                         s_hasStreamedTokens = false;
-                        s_companionVoiceReply = true;
+                        s_playTtsForNextLocalReply = true;
                         Agent::sendVoiceMessage(audioPath.c_str(), "audio/wav", onAgentResponse, onAgentToken);
                     } else if (audioPath.length() > 0) {
                         SPIFFS.remove(audioPath.c_str());
