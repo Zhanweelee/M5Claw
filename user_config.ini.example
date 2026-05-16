@@ -23,6 +23,9 @@ mimo_model = mimo-v2-omni
 deepseek_api_key =
 openai_api_key =
 
+; Web search (Bocha AI — get key at https://open.bochaai.com)
+bocha_api_key =
+
 ; Assistant identity name (shown in system prompt, default: M5Claw)
 assistant_name = M5Claw
 
