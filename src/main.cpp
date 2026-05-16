@@ -101,6 +101,7 @@ static File s_voiceFile;
 static size_t s_voicePcmBytes = 0;
 static bool s_voiceWriteFailed = false;
 static bool s_playTtsForNextLocalReply = false;
+static bool s_companionVoiceReply = false;
 
 static bool speakReplyWithPause(const char* text) {
     if (Config::getMuteTts()) {
@@ -761,6 +762,28 @@ void loop() {
         if (s_discardAgentResponse) {
             Serial.println("[MAIN] Discarding cancelled agent response");
             s_discardAgentResponse = false;
+        } else if (s_companionVoiceReply) {
+            char ttsText[M5CLAW_TTS_TEXT_MAX * 4 + 1] = {0};
+            bool shouldSpeak = agentResponseText[0] != '\0';
+            if (shouldSpeak) {
+                strlcpy(ttsText, agentResponseText, sizeof(ttsText));
+            }
+
+            free(agentResponseText);
+            agentResponseText = nullptr;
+            agentResponseReady = false;
+            s_hasStreamedTokens = false;
+            s_companionVoiceReply = false;
+
+            if (shouldSpeak) {
+                delay(20);
+                if (!speakReplyWithPause(ttsText)) {
+                    companion.triggerIdle();
+                }
+            } else {
+                companion.triggerIdle();
+            }
+            return;
         } else {
             if (!s_hasStreamedTokens) {
                 chat.appendAIToken(agentResponseText);
@@ -851,11 +874,69 @@ void loop() {
 
             static bool prevFn = false;
             static bool fnComboUsed = false;
+            static unsigned long fnHoldStartMs = 0;
+            static bool fnRecordTriggered = false;
 
             bool fnDown = ks.fn && !prevFn;
             bool fnUp   = !ks.fn && prevFn;
+            bool fnAlone = ks.fn && ks.word.size() == 0
+                           && !ks.tab && !ks.enter && !ks.del;
 
             if (fnDown) fnComboUsed = false;
+
+            // Track fn hold for voice recording
+            if (fnUp) {
+                fnHoldStartMs = 0;
+                fnRecordTriggered = false;
+            } else if (fnAlone) {
+                if (fnDown || fnHoldStartMs == 0) {
+                    fnHoldStartMs = millis();
+                }
+            } else {
+                fnHoldStartMs = 0;
+                fnRecordTriggered = false;
+            }
+
+            // Start voice recording on fn hold (120ms debounce)
+            if (!offlineMode && fnAlone && !fnRecordTriggered && !voiceRecording
+                && !Agent::isBusy()
+                && fnHoldStartMs != 0 && millis() - fnHoldStartMs >= 120) {
+                startVoiceRecording();
+                fnRecordTriggered = voiceRecording;
+            }
+
+            // Stop voice recording on fn release
+            if (fnUp && voiceRecording) {
+                String audioPath = stopVoiceRecording();
+                if (!offlineMode && audioPath.length() > 0) {
+                    companion.triggerTalk();
+                    s_hasStreamedTokens = false;
+                    s_companionVoiceReply = true;
+                    Agent::sendVoiceMessage(audioPath.c_str(), "audio/wav", onAgentResponse, onAgentToken);
+                } else if (audioPath.length() > 0) {
+                    SPIFFS.remove(audioPath.c_str());
+                }
+                fnHoldStartMs = 0;
+                fnRecordTriggered = false;
+                fnComboUsed = true; // suppress cycleSunset
+            }
+
+            // Stream voice data during recording
+            if (voiceRecording) {
+                streamVoiceData();
+                if (millis() - recordingStartMs >= M5CLAW_AUDIO_MAX_SECONDS * 1000UL) {
+                    String audioPath = stopVoiceRecording();
+                    if (!offlineMode && audioPath.length() > 0) {
+                        companion.triggerTalk();
+                        s_hasStreamedTokens = false;
+                        s_companionVoiceReply = true;
+                        Agent::sendVoiceMessage(audioPath.c_str(), "audio/wav", onAgentResponse, onAgentToken);
+                    } else if (audioPath.length() > 0) {
+                        SPIFFS.remove(audioPath.c_str());
+                    }
+                    fnComboUsed = true;
+                }
+            }
 
             if (keyPressed) {
                 if (ks.tab) {
@@ -890,10 +971,10 @@ void loop() {
                         break;
                     }
                 }
-                if (!ks.fn) Companion::playKeyClick();
+                if (!ks.fn && !voiceRecording) Companion::playKeyClick();
             }
 
-            if (fnUp && !fnComboUsed) {
+            if (fnUp && !fnComboUsed && !voiceRecording) {
                 companion.cycleSunset();
                 Companion::playKeyClick();
             }
@@ -904,6 +985,23 @@ void loop() {
             companion.setWeather(weatherClient.getData());
             companion.update(canvas);
             companion.drawNotificationOverlay(canvas);
+
+            // Recording indicator bar
+            if (voiceRecording) {
+                float dur = (float)(millis() - recordingStartMs) / 1000.0f;
+                canvas.fillRect(0, SCREEN_H - 16, SCREEN_W, 16, rgb565(200, 50, 50));
+                canvas.setTextColor(Color::WHITE);
+                canvas.setTextSize(1);
+                char recLabel[40];
+                snprintf(recLabel, sizeof(recLabel), "Recording... %.1fs", dur);
+                canvas.drawString(recLabel, 62, SCREEN_H - 12);
+            } else if (Agent::isBusy()) {
+                canvas.fillRect(0, SCREEN_H - 16, SCREEN_W, 16, rgb565(80, 80, 80));
+                canvas.setTextColor(rgb565(200, 200, 200));
+                canvas.setTextSize(1);
+                canvas.drawString("Processing...", 78, SCREEN_H - 12);
+            }
+
             canvas.pushSprite(0, 0);
             break;
         }
@@ -1655,6 +1753,7 @@ void initOnlineServices() {
 void enterCompanionMode() {
     appMode = AppMode::COMPANION;
     companion.begin(canvas);
+    companion.startAutoCycle();
 }
 
 void enterChatMode() {

@@ -28,6 +28,9 @@ void Companion::begin(M5Canvas&) {
     targetScene  = 1;
     transitionActive = false;
     transitionAlpha  = 0;
+    autoCycleTimer = 0;
+    autoCycleNext  = 0;
+    wasRaining = false;
     anim.begin();
 }
 
@@ -44,6 +47,26 @@ void Companion::update(M5Canvas& canvas) {
     M5.Imu.getAccel(&ax, &ay, &az);
     anim.update(dt, ax, ay, az);
 
+    // Shake triggers scene auto-cycle
+    bool raining = anim.isRaining();
+    if (raining && !wasRaining) {
+        startAutoCycle();
+    }
+    wasRaining = raining;
+
+    // Auto-cycle scenes
+    if (autoCycleTimer > 0) {
+        autoCycleTimer -= dt;
+        autoCycleNext  -= dt;
+        if (autoCycleNext <= 0 && !transitionActive) {
+            cycleSunset();
+            autoCycleNext = CYCLE_INTERVAL;
+        }
+        if (autoCycleTimer <= 0) {
+            autoCycleTimer = 0;
+        }
+    }
+
     if (transitionActive) {
         transitionAlpha += TRANSITION_STEP;
         if (transitionAlpha >= TRANSITION_END) {
@@ -53,9 +76,7 @@ void Companion::update(M5Canvas& canvas) {
         }
     }
     drawScene(canvas);
-    anim.drawFire(canvas);
     anim.drawRain(canvas);
-    anim.drawChar(canvas);
     drawTopBar(canvas);
 }
 
@@ -68,6 +89,11 @@ void Companion::cycleSunset() {
     targetScene     = (currentScene + 1) % 3;
     transitionAlpha = 0;
     transitionActive = true;
+}
+
+void Companion::startAutoCycle() {
+    autoCycleTimer = AUTO_CYCLE_DURATION;
+    autoCycleNext  = CYCLE_INTERVAL;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -152,8 +178,14 @@ void Companion::drawTopBar(M5Canvas& canvas) {
 
     drawOText(canvas, "[Tab]chat", 3, 3, fg, bg);
 
+    int hintX = canvas.textWidth("[Tab]chat") + 12;
+    if (Config::getSttProvider().length() > 0) {
+        drawOText(canvas, "[fn]talk", hintX, 3,
+                  rgb565(100, 200, 255), bg);
+        hintX += canvas.textWidth("[fn]talk") + 8;
+    }
     if (Config::getMuteTts()) {
-        drawOText(canvas, "[M]", canvas.textWidth("[Tab]chat") + 12, 3,
+        drawOText(canvas, "[M]", hintX, 3,
                   rgb565(255, 200, 60), bg);
     }
 
