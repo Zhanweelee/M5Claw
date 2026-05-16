@@ -61,5 +61,8 @@ namespace Config {
     void setWechatApiHost(const String& host);
     void setTransientLlmApiKey(const String& key);
 
+    const String& getBochaApiKey();
+    void setBochaApiKey(const String& key);
+
     bool isValid();
 }
