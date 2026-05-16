@@ -44,11 +44,10 @@ private:
     static constexpr int STAGGER_RANGE     = 80;
     static constexpr int TRANSITION_END    = 255 + STAGGER_RANGE;
 
-    // Auto scene cycling
-    float autoCycleTimer = 0;
-    float autoCycleNext  = 0;
-    static constexpr float AUTO_CYCLE_DURATION = 10.0f;
-    static constexpr float CYCLE_INTERVAL      = 2.5f;
+    // Auto scene cycling — play through all 3 scenes once
+    int   autoCycleCount = 0;
+    float autoCyclePause = 0;
+    static constexpr float CYCLE_PAUSE = 1.5f;
     bool wasRaining = false;
 
     void drawScene(M5Canvas& canvas);

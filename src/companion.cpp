@@ -28,8 +28,8 @@ void Companion::begin(M5Canvas&) {
     targetScene  = 1;
     transitionActive = false;
     transitionAlpha  = 0;
-    autoCycleTimer = 0;
-    autoCycleNext  = 0;
+    autoCycleCount = 0;
+    autoCyclePause = 0;
     wasRaining = false;
     anim.begin();
 }
@@ -54,16 +54,15 @@ void Companion::update(M5Canvas& canvas) {
     }
     wasRaining = raining;
 
-    // Auto-cycle scenes
-    if (autoCycleTimer > 0) {
-        autoCycleTimer -= dt;
-        autoCycleNext  -= dt;
-        if (autoCycleNext <= 0 && !transitionActive) {
-            cycleSunset();
-            autoCycleNext = CYCLE_INTERVAL;
-        }
-        if (autoCycleTimer <= 0) {
-            autoCycleTimer = 0;
+    // Auto-cycle scenes — play through all 3 once
+    if (autoCycleCount > 0) {
+        if (!transitionActive) {
+            autoCyclePause -= dt;
+            if (autoCyclePause <= 0) {
+                cycleSunset();
+                autoCycleCount--;
+                autoCyclePause = CYCLE_PAUSE;
+            }
         }
     }
 
@@ -92,8 +91,8 @@ void Companion::cycleSunset() {
 }
 
 void Companion::startAutoCycle() {
-    autoCycleTimer = AUTO_CYCLE_DURATION;
-    autoCycleNext  = CYCLE_INTERVAL;
+    autoCycleCount = 3;
+    autoCyclePause = 0; // immediate first transition
 }
 
 // ══════════════════════════════════════════════════════════════
