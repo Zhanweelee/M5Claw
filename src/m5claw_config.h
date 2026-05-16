@@ -13,6 +13,7 @@
 #define M5CLAW_PROVIDER_DEEPSEEK       "deepseek"
 #define M5CLAW_PROVIDER_OPENAI         "openai"
 #define M5CLAW_PROVIDER_ANTHROPIC      "anthropic"
+#define M5CLAW_PROVIDER_SILICONFLOW    "siliconflow"
 #define M5CLAW_PROVIDER_CUSTOM         "custom"
 #define M5CLAW_DEFAULT_PROVIDER        M5CLAW_PROVIDER_MIMO
 
@@ -41,6 +42,11 @@
 #define M5CLAW_ANTHROPIC_HOST          "api.anthropic.com"
 #define M5CLAW_ANTHROPIC_CHAT_PATH     "/v1/messages"
 #define M5CLAW_ANTHROPIC_MODEL         "claude-sonnet-4-6"
+
+// Provider defaults - SiliconFlow
+#define M5CLAW_SILICONFLOW_CHAT_HOST   "api.siliconflow.cn"
+#define M5CLAW_SILICONFLOW_CHAT_PATH   "/v1/chat/completions"
+#define M5CLAW_SILICONFLOW_CHAT_MODEL  "Qwen/Qwen3-Omni-30B-A3B-Instruct"
 
 // TTS-only provider IDs
 #define M5CLAW_TTS_PROVIDER_SILICONFLOW "siliconflow"

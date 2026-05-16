@@ -50,6 +50,13 @@ static const LlmProviderInfo kProviders[] = {
         false, "x-api-key", "anthropic"
     },
     {
+        M5CLAW_PROVIDER_SILICONFLOW, "SiliconFlow",
+        M5CLAW_SILICONFLOW_CHAT_HOST, M5CLAW_SILICONFLOW_CHAT_PATH, M5CLAW_SILICONFLOW_CHAT_MODEL,
+        false, nullptr, nullptr, nullptr, 0,
+        false, 0, 0,
+        true, nullptr, nullptr
+    },
+    {
         M5CLAW_PROVIDER_CUSTOM, "Custom",
         "", "/v1/chat/completions", "",
         false, nullptr, nullptr, nullptr, 0,
@@ -528,7 +535,12 @@ static bool parse_media_placeholder(const String& body, size_t tokenPos, Request
                   outRef->path, (unsigned)fileSize, outRef->mime);
 
     size_t base64Len = 4 * ((fileSize + 2) / 3);
-    outRef->replacement_len = strlen("data:;base64,") + strlen(outRef->mime) + base64Len;
+    bool isAudio = (strncmp(outRef->mime, "audio/", 6) == 0);
+    if (isAudio) {
+        outRef->replacement_len = base64Len;  // raw base64 for input_audio.data
+    } else {
+        outRef->replacement_len = strlen("data:;base64,") + strlen(outRef->mime) + base64Len;
+    }
     if (outRef->replacement_len > M5CLAW_MEDIA_DATA_URI_MAX) {
         Serial.printf("[LLM] Media data URI too large: %u\n", (unsigned)outRef->replacement_len);
         return false;
@@ -594,15 +606,19 @@ static bool write_media_data_uri(WiFiClientSecure& client, const RequestMediaRef
         return false;
     }
 
-    char prefix[80];
-    int prefixLen = snprintf(prefix, sizeof(prefix), "data:%s;base64,", ref.mime);
-    if (prefixLen <= 0 || prefixLen >= (int)sizeof(prefix)) {
-        f.close();
-        return false;
-    }
-    if (!write_all(client, prefix, prefixLen, written_total)) {
-        f.close();
-        return false;
+    // Audio types use raw base64 (for input_audio.data); images use full data URI
+    bool isAudio = (strncmp(ref.mime, "audio/", 6) == 0);
+    if (!isAudio) {
+        char prefix[80];
+        int prefixLen = snprintf(prefix, sizeof(prefix), "data:%s;base64,", ref.mime);
+        if (prefixLen <= 0 || prefixLen >= (int)sizeof(prefix)) {
+            f.close();
+            return false;
+        }
+        if (!write_all(client, prefix, prefixLen, written_total)) {
+            f.close();
+            return false;
+        }
     }
 
     uint8_t rawBuf[768 + 2];

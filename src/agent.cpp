@@ -151,6 +151,7 @@ static bool appendRequestUserMessage(JsonDocument& messages, const AgentRequest&
         audioPart["type"] = "input_audio";
         JsonObject inputAudio = audioPart["input_audio"].to<JsonObject>();
         inputAudio["data"] = mediaPlaceholder;
+        inputAudio["format"] = "wav";
     } else if (req.mediaKind == BUS_MEDIA_IMAGE) {
         JsonObject imagePart = content.add<JsonObject>();
         imagePart["type"] = "image_url";
