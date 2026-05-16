@@ -135,6 +135,7 @@ bool Config::load() {
     sttModel        = prefs.getString("stt_model", "");
     muteTts         = prefs.getBool("mute_tts", false);
     bochaApiKey     = readSecret("bocha_key");
+    if (bochaApiKey.length() == 0 && USER_BOCHA_KEY[0]) bochaApiKey = USER_BOCHA_KEY;
     prefs.end();
     llmApiKeyTransient = false;
     return ssid.length() > 0;

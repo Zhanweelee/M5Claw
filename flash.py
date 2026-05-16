@@ -155,6 +155,8 @@ def interactive_config(project_dir):
             stt_name = {p[0]: p[1] for p in STT_PROVIDERS}.get(cache.get("stt_provider", ""), cache.get("stt_provider", ""))
             print(f"  STT:         {stt_name}")
             print(f"  STT Model:   {cache.get('stt_model', '')}")
+        if cache.get("bocha_api_key"):
+            print(f"  Bocha Key:   [{'*' * min(len(cache['bocha_api_key']), 8)}]")
         print()
 
         use_cached = prompt("Use existing config?", "Y").lower()
@@ -184,6 +186,8 @@ def interactive_config(project_dir):
                 print(f"  STT Model:   {config.get('stt_model', '')}")
                 if config.get("stt_key"):
                     print(f"  STT Key:     [{'*' * min(len(config['stt_key']), 8)}]")
+            if config.get("bocha_api_key"):
+                print(f"  Bocha Key:   [{'*' * min(len(config['bocha_api_key']), 8)}]")
             print("----------------------------------------")
 
             ok = prompt("Proceed with flash? (Y/n)", "Y").lower()
@@ -428,6 +432,13 @@ def interactive_config(project_dir):
         config["stt_key"] = ""
         config["stt_model"] = ""
 
+    # ── Bocha Web Search Key ──
+    print()
+    print("Web Search — Bocha AI (get free key at https://open.bochaai.com)")
+    cached_bocha = cache.get("bocha_api_key", "")
+    bocha_key = prompt("Bocha API Key (empty=skip, web_search disabled)", cached_bocha, sensitive=True)
+    config["bocha_api_key"] = bocha_key
+
     # Show summary
     print()
     print("-------- Configuration Summary --------")
@@ -452,6 +463,8 @@ def interactive_config(project_dir):
         print(f"  STT Model:   {config.get('stt_model', '')}")
         if config.get("stt_key"):
             print(f"  STT Key:     [{'*' * min(len(config['stt_key']), 8)}]")
+    if config.get("bocha_api_key"):
+        print(f"  Bocha Key:   [{'*' * min(len(config['bocha_api_key']), 8)}]")
     print("----------------------------------------")
 
     ok = prompt("Proceed with flash? (Y/n)", "Y").lower()
@@ -570,6 +583,7 @@ def main():
         ("M5CLAW_STT_PROVIDER",     "stt_provider"),
         ("M5CLAW_STT_KEY",          "stt_key"),
         ("M5CLAW_STT_MODEL",        "stt_model"),
+        ("M5CLAW_BOCHA_KEY",        "bocha_api_key"),
     ]:
         val = config.get(cfg_key, "").strip()
         if val:

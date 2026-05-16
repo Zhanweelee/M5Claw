@@ -32,6 +32,7 @@ mapping = {
     "stt_provider": "USER_STT_PROVIDER",
     "stt_key": "USER_STT_KEY",
     "stt_model": "USER_STT_MODEL",
+    "bocha_api_key": "USER_BOCHA_KEY",
 }
 
 # Environment variable overrides (flash.py sets these)
@@ -52,6 +53,7 @@ env_override = {
     "M5CLAW_STT_PROVIDER":     "stt_provider",
     "M5CLAW_STT_KEY":          "stt_key",
     "M5CLAW_STT_MODEL":        "stt_model",
+    "M5CLAW_BOCHA_KEY":        "bocha_api_key",
 }
 
 flags = []

@@ -63,6 +63,9 @@
 #define M5CLAW_BOCHA_SEARCH_PATH       "/v1/web-search"
 #define M5CLAW_BOCHA_DEFAULT_COUNT     5
 #define M5CLAW_BOCHA_MAX_COUNT         10
+#ifndef USER_BOCHA_KEY
+#define USER_BOCHA_KEY                 ""
+#endif
 
 // STT-only provider IDs
 #define M5CLAW_STT_PROVIDER_SILICONFLOW  "siliconflow"
