@@ -1033,6 +1033,127 @@ static bool read_body_to_spiffs(WiFiClientSecure& client, bool chunked, int cont
     return total > 0;
 }
 
+// Stream a WAV body from HTTP directly to the speaker — no SPIFFS round-trip.
+// Parses the WAV header from initial body bytes, then feeds PCM to the speaker
+// in 8KB chunks with a 10ms overlap to avoid gaps.
+static bool stream_wav_body_to_speaker(WiFiClientSecure& client, bool chunked, int contentLength) {
+    ChunkedReader reader(client, chunked, contentLength);
+
+    const size_t kMaxHdr = 1024;
+    uint8_t* hdr = (uint8_t*)malloc(kMaxHdr);
+    if (!hdr) return false;
+
+    size_t hdrLen = 0;
+    while (hdrLen < kMaxHdr) {
+        int c = reader.readByte();
+        if (c < 0) break;
+        hdr[hdrLen++] = (uint8_t)c;
+    }
+
+    if (hdrLen < 44) { free(hdr); return false; }
+    if (memcmp(hdr, "RIFF", 4) != 0 || memcmp(hdr + 8, "WAVE", 4) != 0) {
+        free(hdr);
+        return false;
+    }
+
+    uint16_t audioFormat = 0, channels = 1, bitsPerSample = 16;
+    uint32_t sampleRate = 24000;
+    uint32_t pcmOffset = 0, pcmLen = 0;
+
+    size_t pos = 12;
+    while (pos + 8 <= hdrLen) {
+        const uint8_t* chunk = hdr + pos;
+        uint32_t chunkSize = (uint32_t)chunk[4] | ((uint32_t)chunk[5] << 8)
+                           | ((uint32_t)chunk[6] << 16) | ((uint32_t)chunk[7] << 24);
+        if (memcmp(chunk, "fmt ", 4) == 0 && chunkSize >= 16 && pos + 8 + chunkSize <= hdrLen) {
+            const uint8_t* fmt = hdr + pos + 8;
+            audioFormat = (uint16_t)fmt[0] | ((uint16_t)fmt[1] << 8);
+            channels = (uint16_t)fmt[2] | ((uint16_t)fmt[3] << 8);
+            sampleRate = (uint32_t)fmt[4] | ((uint32_t)fmt[5] << 8)
+                       | ((uint32_t)fmt[6] << 16) | ((uint32_t)fmt[7] << 24);
+            bitsPerSample = (uint16_t)fmt[14] | ((uint16_t)fmt[15] << 8);
+        } else if (memcmp(chunk, "data", 4) == 0) {
+            pcmOffset = pos + 8;
+            pcmLen = chunkSize;
+            break;
+        }
+        pos += 8 + chunkSize + (chunkSize & 1U);
+    }
+
+    if (!pcmLen || audioFormat != 1 || bitsPerSample != 16 || sampleRate == 0) {
+        Serial.printf("[TTS] Bad WAV stream: fmt=%u ch=%u rate=%u bps=%u pcm=%u/%u\n",
+                      audioFormat, channels, sampleRate, bitsPerSample,
+                      (unsigned)pcmOffset, (unsigned)pcmLen);
+        free(hdr);
+        return false;
+    }
+
+    Serial.printf("[TTS] Streaming WAV: %uHz %uch %ubit, PCM %u bytes at offset %u\n",
+                  sampleRate, channels, bitsPerSample, (unsigned)pcmLen, (unsigned)pcmOffset);
+
+    // Skip any header bytes beyond our initial read window
+    if (pcmOffset > hdrLen) {
+        size_t skip = pcmOffset - hdrLen;
+        while (skip--) {
+            if (reader.readByte() < 0) { free(hdr); return false; }
+        }
+    }
+
+    // Initial PCM bytes already in the header buffer
+    const uint8_t* initialPcm = hdr + pcmOffset;
+    size_t initialPcmLen = (pcmOffset < hdrLen) ? (hdrLen - pcmOffset) : 0;
+
+    // Allocate streaming chunk buffer
+    const size_t kChunkBytes = 8192;
+    uint8_t* chunk = (uint8_t*)malloc(kChunkBytes);
+    if (!chunk) { free(hdr); return false; }
+    free(hdr);
+
+    M5Cardputer.Speaker.stop();
+    bool first = true;
+    size_t pcmRemaining = pcmLen;
+
+    auto feedChunk = [&](const uint8_t* data, size_t len) -> bool {
+        if (len == 0) return true;
+        bool ok = M5Cardputer.Speaker.playRaw((const int16_t*)data, len / 2,
+                                               sampleRate, channels > 1, 1, -1, first);
+        if (!ok) return false;
+        first = false;
+        // Wait slightly less than chunk duration so the next chunk arrives
+        // before the speaker buffer drains (10ms overlap, no gaps).
+        unsigned long chunkMs = len * 1000UL / 2 / sampleRate;
+        if (chunkMs > 10) chunkMs -= 10;
+        if (chunkMs > 0) delay(chunkMs);
+        pcmRemaining -= len;
+        return true;
+    };
+
+    if (initialPcmLen > 0) {
+        if (!feedChunk(initialPcm, initialPcmLen)) { free(chunk); return false; }
+    }
+
+    while (pcmRemaining > 0) {
+        size_t toRead = pcmRemaining < kChunkBytes ? pcmRemaining : kChunkBytes;
+        size_t n = 0;
+        while (n < toRead) {
+            int c = reader.readByte();
+            if (c < 0) break;
+            chunk[n++] = (uint8_t)c;
+        }
+        if (n == 0) break;
+        if (!feedChunk(chunk, n)) { free(chunk); return false; }
+    }
+
+    // Drain — wait for the speaker to finish the last chunk
+    unsigned long waitUntil = millis() + (pcmLen * 1000UL / 2 / sampleRate) + 1500;
+    while (M5Cardputer.Speaker.isPlaying() && millis() < waitUntil) {
+        delay(10);
+    }
+
+    free(chunk);
+    return true;
+}
+
 static bool parse_openai_json_response(const char* body, size_t bodyLen, LlmResponse* resp) {
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, body, bodyLen);
@@ -1415,8 +1536,9 @@ static bool play_wav_from_spiffs(const char* path) {
         bool ok = M5Cardputer.Speaker.playRaw((const int16_t*)chunk, n / 2,
                                                sampleRate, channels > 1, 1, -1, !first);
         if (!ok) { f.close(); return false; }
-        unsigned long chunkMs = n * 1000UL / 2 / sampleRate + 30;
-        delay(chunkMs);
+        unsigned long chunkMs = n * 1000UL / 2 / sampleRate;
+        if (chunkMs > 10) chunkMs -= 10;
+        if (chunkMs > 0) delay(chunkMs);
         pcmLen -= n;
         first = false;
     }
@@ -1485,10 +1607,8 @@ static bool tts_post_json_to_host(const char* host, const char* path,
     return true;
 }
 
-static bool tts_post_json_to_host_file(const char* host, const char* path,
-                                        const char* api_key, const String& bodyStr,
-                                        HttpResponseMeta* meta, const char* outFile) {
-    WiFiClientSecure client;
+static bool tts_send_request(WiFiClientSecure& client, const char* host, const char* path,
+                              const char* api_key, const String& bodyStr, HttpResponseMeta* meta) {
     if (!secure_connect(client, host, 443, "[TTS]")) return false;
 
     client.printf("POST %s HTTP/1.1\r\n", path);
@@ -1522,10 +1642,7 @@ static bool tts_post_json_to_host_file(const char* host, const char* path,
         client.stop();
         return false;
     }
-
-    bool ok = read_body_to_spiffs(client, localMeta.chunked, localMeta.content_length, outFile);
-    client.stop();
-    return ok;
+    return true;
 }
 
 bool llm_speak_text(const char* text) {
@@ -1634,20 +1751,23 @@ bool llm_speak_text(const char* text) {
                       s_tts_provider->name, s_tts_provider->host, voice,
                       s_tts_api_key[0] ? "explicit" : "LLM-fallback");
 
+        WiFiClientSecure client;
         HttpResponseMeta meta = {};
-        if (!tts_post_json_to_host_file(s_tts_provider->host, s_tts_provider->tts_path,
-                                        ttsApiKey, bodyStr, &meta, M5CLAW_TTS_TEMP_FILE)) {
+        if (!tts_send_request(client, s_tts_provider->host, s_tts_provider->tts_path,
+                              ttsApiKey, bodyStr, &meta)) {
             Serial.printf("[TTS] Standalone TTS HTTP request failed (status=%d)\n", meta.status_code);
-            SPIFFS.remove(M5CLAW_TTS_TEMP_FILE);
             return false;
         }
 
-        Serial.printf("[TTS] Audio response saved to SPIFFS, type=%s\n",
-                      meta.content_type[0] ? meta.content_type : "(unknown)");
-
         bool isJson = str_contains_nocase(meta.content_type, "application/json");
         if (isJson) {
-            // JSON response — read the small file, extract base64 audio, decode, play
+            // JSON response — save to SPIFFS, extract base64 audio, decode, play
+            if (!read_body_to_spiffs(client, meta.chunked, meta.content_length, M5CLAW_TTS_TEMP_FILE)) {
+                client.stop();
+                return false;
+            }
+            client.stop();
+
             File jf = SPIFFS.open(M5CLAW_TTS_TEMP_FILE, "r");
             if (!jf) { SPIFFS.remove(M5CLAW_TTS_TEMP_FILE); return false; }
             size_t jsz = jf.size();
@@ -1685,10 +1805,12 @@ bool llm_speak_text(const char* text) {
             return played;
         }
 
-        // Audio response — play WAV directly from SPIFFS file
-        bool played = play_wav_from_spiffs(M5CLAW_TTS_TEMP_FILE);
-        SPIFFS.remove(M5CLAW_TTS_TEMP_FILE);
-        if (!played) Serial.println("[TTS] WAV playback from SPIFFS failed");
+        // Audio response — stream WAV directly to speaker, no SPIFFS
+        Serial.printf("[TTS] Audio response, type=%s, streaming to speaker\n",
+                      meta.content_type[0] ? meta.content_type : "(unknown)");
+        bool played = stream_wav_body_to_speaker(client, meta.chunked, meta.content_length);
+        client.stop();
+        if (!played) Serial.println("[TTS] WAV streaming failed");
         return played;
     };
 
