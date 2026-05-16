@@ -15,6 +15,7 @@ public:
     void appendAIToken(const char* token);
     void onAIResponseComplete();
     void addMessage(const String& text, bool isUser);
+    void replaceLastUserMessage(const String& text);
     void scrollToBottom();
 
     bool hasPendingMessage() const { return pendingMessage.length() > 0; }

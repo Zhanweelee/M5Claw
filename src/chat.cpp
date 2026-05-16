@@ -160,6 +160,18 @@ void Chat::setInput(const String& text) {
     inputBuffer = text;
 }
 
+void Chat::replaceLastUserMessage(const String& text) {
+    for (int i = messageCount - 1; i >= 0 && i >= messageCount - MAX_MESSAGES; i--) {
+        int idx = i % MAX_MESSAGES;
+        if (messages[idx].isUser) {
+            messages[idx].text = text;
+            cachedHeights[idx] = 0;
+            heightsDirty = true;
+            return;
+        }
+    }
+}
+
 void Chat::addMessage(const String& text, bool isUser) {
     int idx = messageCount % MAX_MESSAGES;
     messages[idx].text = "";

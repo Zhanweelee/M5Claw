@@ -733,7 +733,12 @@ void loop() {
         char* token;
         while (xQueueReceive(s_tokenQueue, &token, 0) == pdTRUE) {
             if (!s_discardAgentResponse) {
-                chat.appendAIToken(token);
+                if (token[0] == '\x01') {
+                    // STT result: replace [voice] placeholder with transcribed text
+                    chat.replaceLastUserMessage(String("[VOICE] ") + (token + 1));
+                } else {
+                    chat.appendAIToken(token);
+                }
             }
             free(token);
         }

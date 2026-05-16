@@ -209,6 +209,18 @@ static void processRequest(AgentRequest& req, char* system_prompt, char* tool_ou
         char* transcribed = nullptr;
         size_t transcribedLen = 0;
         if (stt_transcribe_file(req.mediaPath, &transcribed, &transcribedLen) && transcribed) {
+            // Signal STT result to UI via token callback (prefix \x01 marks it as STT, not AI token)
+            if (req.tokenCallback) {
+                size_t sigLen = transcribedLen + 2;
+                char* sig = (char*)malloc(sigLen);
+                if (sig) {
+                    sig[0] = '\x01';
+                    memcpy(sig + 1, transcribed, transcribedLen);
+                    sig[sigLen - 1] = '\0';
+                    req.tokenCallback(sig);
+                    free(sig);
+                }
+            }
             free(req.text);
             req.text = transcribed;
             req.mediaKind = BUS_MEDIA_NONE;
