@@ -59,6 +59,15 @@ private:
     char notifyApp[32];
     char notifyTitle[48];
     char notifyBody[64];
+
+public:
+    void showHelp() { helpActive = true; }
+    void hideHelp() { helpActive = false; }
+    bool isHelpActive() const { return helpActive; }
+    void drawHelpOverlay(M5Canvas& canvas);
+
+private:
+    bool helpActive = false;
 };
 
 void playBootAnimation(M5Canvas& canvas);
